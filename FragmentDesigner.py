@@ -78,6 +78,33 @@ _GLEAN_AGENT_ID  = "2491a8dae7254256975430b2c635a26b"
 _GLEAN_API_BASE  = "https://manhattan-associates-be.glean.com/api/v1"
 _GLEAN_API_PARAMS= {"clientVersion": "fe-release-2026-05-28-9a91fc9", "locale": "en"}
 
+# Optional PIL/Pillow — needed for clipboard image paste
+try:
+    from PIL import ImageGrab as _ImageGrab, Image as _PILImage
+    import io as _io, base64 as _b64
+    _GLEAN_PIL_OK = True
+except ImportError:
+    _GLEAN_PIL_OK = False
+
+def _glean_upload_file(image_bytes, filename="image.png"):
+    """Upload image bytes to Glean and return the fileId string, or None on failure."""
+    if not _GLEAN_REQUESTS_OK:
+        return None
+    sess = _glean_build_session()
+    try:
+        resp = sess.post(
+            f"{_GLEAN_API_BASE}/uploadfile",
+            params=_GLEAN_API_PARAMS,
+            files={"file": (filename, image_bytes, "image/png")},
+            timeout=30,
+        )
+        if resp.ok:
+            data = resp.json()
+            return data.get("fileId") or data.get("id") or data.get("uploadId")
+    except Exception:
+        pass
+    return None
+
 def _glean_build_session():
     """Read Chrome cookies and return a requests.Session for Glean API calls."""
     if not _GLEAN_REQUESTS_OK:
@@ -201,68 +228,258 @@ def _glean_call_agent(prompt_text, on_partial=None, uploaded_file_ids=None):
     return last_text or full_raw
 
 def _glean_extract_suggestions(text):
-    """Parse suggestions JSON from a Glean response string."""
+    """
+    Parse suggestions JSON from a Glean response string.
+    Returns (suggestions_list, full_fragment_or_None).
+    For backward compat, also callable as _glean_extract_suggestions(text)
+    which returns only the list — callers that want full_fragment must unpack
+    the tuple explicitly.
+    """
     import json as _j, re as _re
-    for pat in [
-        r'```json\s*(.*?)```',
-        r'```\s*(.*?)```',
-        r'(\{[^{}]*"suggestions"[^{}]*\[.*?\]\s*\})',
-    ]:
+
+    def _try_parse(raw):
+        try:
+            raw = raw.strip()
+            data = _j.loads(raw)
+            sugg = [_normalize_suggestion(s) for s in data.get('suggestions', [])]
+            full = data.get('full_fragment_update') or data.get('full_fragment')
+            return sugg, full
+        except Exception:
+            return None
+
+    # 1. Fenced code blocks
+    for pat in [r'```json\s*(.*?)```', r'```\s*(.*?)```']:
         m = _re.search(pat, text, _re.DOTALL)
         if m:
-            try:
-                data = _j.loads(m.group(1).strip())
-                if 'suggestions' in data:
-                    return data['suggestions']
-            except Exception:
-                pass
-    # bare JSON anywhere in text
-    try:
-        start = text.find('{"suggestions"')
-        if start == -1: start = text.find('{ "suggestions"')
-        if start != -1:
-            data = _j.loads(text[start:])
-            if 'suggestions' in data: return data['suggestions']
-    except Exception: pass
-    return []
+            r = _try_parse(m.group(1))
+            if r is not None:
+                return r
+
+    # 2. Bare JSON object that contains "suggestions" or "full_fragment_update"
+    for key in ('"suggestions"', '"full_fragment_update"', '"full_fragment"'):
+        start = text.find('{')
+        while start != -1:
+            # find matching brace
+            depth, end = 0, start
+            for i, ch in enumerate(text[start:], start):
+                if ch == '{': depth += 1
+                elif ch == '}': depth -= 1
+                if depth == 0: end = i; break
+            candidate = text[start:end+1]
+            if key in candidate:
+                r = _try_parse(candidate)
+                if r is not None:
+                    return r
+            start = text.find('{', start + 1)
+
+    return [], None
+
+# Common agent field-name typos — normalized before anything touches a suggestion.
+_SUGG_FIELD_ALIASES = {
+    'remov_props':         'remove_props',
+    'remove_prop':         'remove_props',
+    'sae_to_auto_apply':   'safe_to_auto_apply',
+    'safe_auto_apply':     'safe_to_auto_apply',
+    'fix_prop':            'fix_props',
+    'merge_json_data':     'merge_data',
+    'suggeston_label':     'suggestion_label',
+    'suggesion_label':     'suggestion_label',
+}
+
+def _normalize_suggestion(s):
+    """Return a copy of suggestion dict with known field-name typos corrected."""
+    if not isinstance(s, dict):
+        return s
+    out = {}
+    for k, v in s.items():
+        out[_SUGG_FIELD_ALIASES.get(k, k)] = v
+    return out
+
+def _glean_resolve_path(fragment_root, path):
+    """
+    Resolve a dot-bracket path into (parent, key_or_index, target).
+    Strips a leading 'Fragment.' prefix automatically.
+    Returns (None, None, fragment_root) for empty path.
+    Raises KeyError / IndexError / TypeError on miss.
+    """
+    import re as _re
+    path = _re.sub(r'^Fragment\.?', '', path or '')
+    if not path:
+        return None, None, fragment_root
+    parts = _re.split(r'\.(?![^\[]*\])', path)
+    node = fragment_root
+    for part in parts[:-1]:
+        m = _re.match(r'^(\w+)\[(\d+)\]$', part)
+        if m:
+            node = node[m.group(1)][int(m.group(2))]
+        elif part:
+            node = node[part]
+    last = parts[-1]
+    m = _re.match(r'^(\w+)\[(\d+)\]$', last)
+    if m:
+        k, idx = m.group(1), int(m.group(2))
+        return node[k], idx, node[k][idx]
+    return node, last, node[last] if isinstance(node, dict) and last in node else None
+
 
 def _glean_apply_suggestion(fragment_root, suggestion):
     """
     Apply a single suggestion dict to fragment_root in-place.
-    Returns True on success, False on path-not-found.
+
+    Supported ops (field "op", default "set_props"):
+      set_props   – set fix_props keys, remove remove_props keys on target node
+      merge_json  – deep-merge "merge_data" dict into target node
+      replace_node– replace node at path with "replacement" value
+      add_child   – insert "child_json" into a Slots array at path
+      delete_node – remove node at path from its parent
+      add_variable– set a CSS variable ("variable_name"/"variable_value") in
+                    target node's CSSVariables dict
+      set_fragment– replace the entire fragment_root with "new_fragment"
+
+    Returns True on success, False on failure.
     """
     import re as _re
-    path = suggestion.get('path', '')
-    fix_props = suggestion.get('fix_props') or {}
-    remove_props = suggestion.get('remove_props') or []
 
-    # Resolve path like "Fragment.Slots.Default[1].Slots.Left[0].Style"
-    # Strip leading "Fragment." if present
-    path = _re.sub(r'^Fragment\.?', '', path)
-    node = fragment_root
-    if not path:
-        target = node
-    else:
-        parts = _re.split(r'\.(?![^\[]*\])', path)
+    op   = suggestion.get('op', 'set_props')
+    path = suggestion.get('path', '')
+
+    # ── set_props (default / backward-compat) ────────────────────────────────
+    if op in ('set_props', 'patch', ''):
+        fix_props    = suggestion.get('fix_props') or {}
+        remove_props = suggestion.get('remove_props') or []
         try:
-            for part in parts:
-                m = _re.match(r'^(\w+)\[(\d+)\]$', part)
-                if m:
-                    key, idx = m.group(1), int(m.group(2))
-                    node = node[key][idx]
-                elif part:
-                    node = node[part]
-            target = node
-        except (KeyError, IndexError, TypeError):
+            _, _, target = _glean_resolve_path(fragment_root, path)
+            if not isinstance(target, dict):
+                # path may point to a non-existent Style node — auto-create it
+                parent, key, _ = _glean_resolve_path(fragment_root, path)
+                if isinstance(parent, dict) and isinstance(key, str):
+                    parent[key] = {}
+                    target = parent[key]
+                else:
+                    return False
+            for k, v in fix_props.items():
+                target[k] = v
+            for k in remove_props:
+                target.pop(k, None)
+            return bool(fix_props or remove_props)
+        except Exception:
             return False
 
-    if not isinstance(target, dict):
-        return False
-    for k, v in fix_props.items():
-        target[k] = v
-    for k in remove_props:
-        target.pop(k, None)
-    return True
+    # ── merge_json — deep-merge dict into target ──────────────────────────────
+    if op == 'merge_json':
+        # accept fix_props as fallback — agents sometimes send fix_props with merge_json
+        merge_data = suggestion.get('merge_data') or suggestion.get('data') or suggestion.get('fix_props') or {}
+        if not isinstance(merge_data, dict):
+            return False
+        def _deep_merge(dst, src):
+            for k, v in src.items():
+                if k in dst and isinstance(dst[k], dict) and isinstance(v, dict):
+                    _deep_merge(dst[k], v)
+                else:
+                    dst[k] = v
+        try:
+            _, _, target = _glean_resolve_path(fragment_root, path)
+            if target is None:
+                # auto-create missing node
+                parent, key, _ = _glean_resolve_path(fragment_root, path)
+                if isinstance(parent, dict) and isinstance(key, str):
+                    parent[key] = {}
+                    target = parent[key]
+                else:
+                    return False
+            if not isinstance(target, dict):
+                return False
+            _deep_merge(target, merge_data)
+            return True
+        except Exception:
+            return False
+
+    # ── replace_node — swap node at path with replacement ────────────────────
+    if op == 'replace_node':
+        replacement = suggestion.get('replacement') or suggestion.get('node')
+        if replacement is None:
+            return False
+        try:
+            parent, key, _ = _glean_resolve_path(fragment_root, path)
+            if parent is None:
+                fragment_root.clear(); fragment_root.update(replacement)
+            elif isinstance(parent, list) and isinstance(key, int):
+                parent[key] = replacement
+            elif isinstance(parent, dict):
+                parent[key] = replacement
+            else:
+                return False
+            return True
+        except Exception:
+            return False
+
+    # ── add_child — append / insert node into a Slots list ───────────────────
+    if op == 'add_child':
+        child = suggestion.get('child_json') or suggestion.get('child')
+        if child is None:
+            return False
+        index = suggestion.get('insert_index')
+        try:
+            _, _, target = _glean_resolve_path(fragment_root, path)
+            if isinstance(target, list):
+                lst = target
+            elif isinstance(target, dict):
+                # path points to a Slots dict — use Default slot
+                lst = target.get('Default')
+                if not isinstance(lst, list):
+                    target['Default'] = []; lst = target['Default']
+            else:
+                return False
+            if index is None or index < 0 or index >= len(lst):
+                lst.append(child)
+            else:
+                lst.insert(index, child)
+            return True
+        except Exception:
+            return False
+
+    # ── delete_node — remove node from its parent ─────────────────────────────
+    if op == 'delete_node':
+        try:
+            parent, key, _ = _glean_resolve_path(fragment_root, path)
+            if isinstance(parent, list) and isinstance(key, int):
+                parent.pop(key)
+            elif isinstance(parent, dict) and isinstance(key, str):
+                parent.pop(key, None)
+            else:
+                return False
+            return True
+        except Exception:
+            return False
+
+    # ── add_variable — set a CSS variable on a node's CSSVariables ───────────
+    if op == 'add_variable':
+        var_name  = suggestion.get('variable_name') or suggestion.get('name', '')
+        var_value = suggestion.get('variable_value') if 'variable_value' in suggestion \
+                    else suggestion.get('value', '')
+        if not var_name:
+            return False
+        try:
+            _, _, target = _glean_resolve_path(fragment_root, path or 'Fragment')
+            if not isinstance(target, dict):
+                target = fragment_root
+        except Exception:
+            target = fragment_root
+        if 'CSSVariables' not in target or not isinstance(target['CSSVariables'], dict):
+            target['CSSVariables'] = {}
+        target['CSSVariables'][var_name] = var_value
+        return True
+
+    # ── set_fragment — replace the entire fragment root ───────────────────────
+    if op == 'set_fragment':
+        new_frag = suggestion.get('new_fragment') or suggestion.get('fragment')
+        if not isinstance(new_frag, dict):
+            return False
+        fragment_root.clear()
+        fragment_root.update(new_frag)
+        return True
+
+    return False  # unknown op
 
 # ── VERSION & CONFLUENCE UPDATE-CHECK CONFIG ────────────────────────
 APP_VERSION = "5.2.0"          # Bump this with each release
@@ -4978,7 +5195,8 @@ class GleanChatDialog(tk.Toplevel):
     """
     _AGENT_URL = f"https://app.glean.com/chat/agents/{_GLEAN_AGENT_ID}"
 
-    def __init__(self, parent, fragment_root: dict, on_apply_cb=None, validation_issues=None):
+    def __init__(self, parent, fragment_root: dict, on_apply_cb=None,
+                 validation_issues=None, history_store=None):
         super().__init__(parent)
         self.title("✨ Glean AI — Fragment Advisor")
         self.geometry("780x680")
@@ -4986,24 +5204,29 @@ class GleanChatDialog(tk.Toplevel):
         self.configure(bg="#0F172A")
         self.fragment_root     = fragment_root
         self.on_apply_cb       = on_apply_cb
-        self._validation_issues = validation_issues or []   # list of (node,path,prop,msg)
+        self._validation_issues = validation_issues or []
         self._thinking         = False
         self._suggestions      = []
         self._suggestion_vars  = []
         self._chat_history     = []
-        self._partial_text     = ""         # accumulates raw streaming text
-        self._partial_start    = False      # True once streaming has begun this turn
-        self._th_btn_tag       = None       # current thinking-section button tag
-        self._th_body_tag      = None       # current thinking-section body tag
-        self._think_counter    = 0          # incremented each turn for unique tag names
+        # External list owned by the caller (lives on _root) so history survives
+        # dialog recreation. None means no external store.
+        self._history_store    = history_store
+        self._partial_text     = ""
+        self._partial_start    = False
+        self._th_btn_tag       = None
+        self._th_body_tag      = None
+        self._think_counter    = 0
+        self._sugg_counter     = 0
         self._attachments      = []
         self._build_ui()
         # Hide instead of destroy on close so chat history survives
         self.protocol("WM_DELETE_WINDOW", self.withdraw)
-        # Show welcome message
-        self._append_message("ai",
-            "👋 Hello! I'm your Fragment Design AI advisor.\n\n"
-            "Describe what you'd like to improve — for example:\n"
+        # Show welcome message only on a fresh session (empty store)
+        if not history_store:
+            self._append_message("ai",
+                "👋 Hello! I'm your Fragment Design AI advisor.\n\n"
+                "Describe what you'd like to improve — for example:\n"
             "• \"Make the table headers darker\"\n"
             "• \"The background colors don't match the design\"\n"
             "• \"Suggest layout improvements for this fragment\"\n\n"
@@ -5100,6 +5323,10 @@ class GleanChatDialog(tk.Toplevel):
         self._input_entry.pack(fill=tk.X, padx=10, pady=8)
         self._input_entry.bind("<Return>", lambda e: self._send())
         self._input_entry.bind("<Shift-Return>", lambda e: None)
+        # Clipboard image paste — Cmd+V on macOS, Ctrl+V on Windows/Linux
+        for seq in ("<Command-v>", "<Control-v>"):
+            self._input_entry.bind(seq, self._paste_from_clipboard)
+            self.bind(seq, self._paste_from_clipboard)
 
         self._send_btn = self._mkbtn(input_bar, "Send  ➤", "#7C3AED", "white",
                                      self._send,
@@ -5113,6 +5340,7 @@ class GleanChatDialog(tk.Toplevel):
             parent=self,
             title="Attach file to Glean prompt",
             filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.gif *.bmp *.webp"),
                 ("JSON files", "*.json"),
                 ("Text files", "*.txt"),
                 ("Python files", "*.py"),
@@ -5121,19 +5349,77 @@ class GleanChatDialog(tk.Toplevel):
         )
         if not path:
             return
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                content = fh.read()
-        except Exception as ex:
-            self._append_message("error", f"Could not read file: {ex}")
+        ext = os.path.splitext(path)[1].lower()
+        if ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
+            self._attach_image_file(path)
+        else:
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+            except Exception as ex:
+                self._append_message("error", f"Could not read file: {ex}")
+                return
+            name = os.path.basename(path)
+            MAX = 40_000
+            if len(content) > MAX:
+                content = content[:MAX] + f"\n…[truncated at {MAX} chars]"
+            self._attachments.append({"name": name, "content": content})
+            self._refresh_chips()
+
+    def _attach_image_file(self, path):
+        """Read an image file from disk and add it as an image attachment."""
+        if not _GLEAN_PIL_OK:
+            self._append_message("error",
+                "PIL/Pillow not installed — cannot attach images.\nRun: pip install Pillow")
             return
-        name = os.path.basename(path)
-        # Truncate very large files to avoid overwhelming the prompt
-        MAX = 40_000
-        if len(content) > MAX:
-            content = content[:MAX] + f"\n…[truncated at {MAX} chars]"
-        self._attachments.append({"name": name, "content": content})
-        self._refresh_chips()
+        try:
+            img = _PILImage.open(path)
+            buf = _io.BytesIO()
+            img.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+            b64 = _b64.b64encode(img_bytes).decode()
+            name = os.path.basename(path)
+            self._attachments.append({
+                "name": name,
+                "content": b64,
+                "is_image": True,
+                "image_bytes": img_bytes,
+                "size": f"{img.width}×{img.height}",
+            })
+            self._refresh_chips()
+        except Exception as ex:
+            self._append_message("error", f"Could not read image: {ex}")
+
+    def _paste_from_clipboard(self, event=None):
+        """Intercept Cmd/Ctrl+V: if clipboard holds an image, attach it instead of pasting text."""
+        if not _GLEAN_PIL_OK:
+            # PIL not available — let default text paste proceed
+            return None
+        try:
+            img = _ImageGrab.grabclipboard()
+        except Exception:
+            return None
+        if img is None or not hasattr(img, 'save'):
+            # Clipboard has text (or nothing) — let normal paste through
+            return None
+        # Clipboard has an image — capture it
+        try:
+            buf = _io.BytesIO()
+            img.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+            b64 = _b64.b64encode(img_bytes).decode()
+            n = len([a for a in self._attachments if a.get("is_image")]) + 1
+            self._attachments.append({
+                "name": f"pasted_image_{n}.png",
+                "content": b64,
+                "is_image": True,
+                "image_bytes": img_bytes,
+                "size": f"{img.width}×{img.height}",
+            })
+            self._refresh_chips()
+        except Exception as ex:
+            self._append_message("error", f"Could not capture clipboard image: {ex}")
+        return "break"  # suppress default paste into entry
 
     def _remove_attachment(self, idx):
         if 0 <= idx < len(self._attachments):
@@ -5152,9 +5438,34 @@ class GleanChatDialog(tk.Toplevel):
         tk.Label(inner, text="Attached:", bg="#1E293B", fg="#64748B",
                  font=("Helvetica",8,"bold")).pack(side=tk.LEFT, padx=(0,6))
         for i, att in enumerate(self._attachments):
-            chip = tk.Frame(inner, bg="#334155", padx=6, pady=2)
+            chip = tk.Frame(inner, bg="#334155", padx=4, pady=2)
             chip.pack(side=tk.LEFT, padx=2)
-            tk.Label(chip, text=att["name"], bg="#334155", fg="#CBD5E1",
+            if att.get("is_image"):
+                # Show a small thumbnail if PIL is available
+                _thumb_shown = False
+                if _GLEAN_PIL_OK:
+                    try:
+                        img = _PILImage.open(_io.BytesIO(att["image_bytes"]))
+                        img.thumbnail((28, 28), _PILImage.LANCZOS)
+                        from PIL import ImageTk as _ITk
+                        photo = _ITk.PhotoImage(img)
+                        lbl = tk.Label(chip, image=photo, bg="#334155")
+                        lbl.image = photo   # keep reference
+                        lbl.pack(side=tk.LEFT, padx=(0,3))
+                        _thumb_shown = True
+                    except Exception:
+                        pass
+                if not _thumb_shown:
+                    tk.Label(chip, text="🖼", bg="#334155", fg="#94A3B8",
+                             font=("Helvetica",11)).pack(side=tk.LEFT, padx=(0,2))
+                label = att["name"]
+                if att.get("size"):
+                    label += f" ({att['size']})"
+            else:
+                tk.Label(chip, text="📄", bg="#334155", fg="#94A3B8",
+                         font=("Helvetica",9)).pack(side=tk.LEFT, padx=(0,2))
+                label = att["name"]
+            tk.Label(chip, text=label, bg="#334155", fg="#CBD5E1",
                      font=("Helvetica",8)).pack(side=tk.LEFT)
             idx = i
             self._mkbtn(chip, "✕", "#334155", "#CBD5E1",
@@ -5166,6 +5477,8 @@ class GleanChatDialog(tk.Toplevel):
     def _append_message(self, role, text):
         """Append a message bubble to the chat text widget."""
         self._chat_history.append((role, text))
+        if self._history_store is not None:
+            self._history_store.append((role, text))
         self._chat_text.config(state=tk.NORMAL)
         if role == "you":
             self._chat_text.insert(tk.END, "\n  You\n", "you_hdr")
@@ -5175,6 +5488,61 @@ class GleanChatDialog(tk.Toplevel):
             self._chat_text.insert(tk.END, f"  {text}\n", "ai_body")
         elif role == "error":
             self._chat_text.insert(tk.END, f"\n  ⚠ {text}\n", "error")
+        self._chat_text.config(state=tk.DISABLED)
+        self._chat_text.see(tk.END)
+
+    def _restore_chat_history(self, history):
+        """Replay a saved (role, text) history list into a freshly created dialog."""
+        _store = self._history_store
+        self._history_store = None   # disconnect to prevent double-writing to store
+        self._chat_history.clear()
+        self._chat_text.config(state=tk.NORMAL)
+        self._chat_text.delete("1.0", tk.END)
+        self._chat_text.config(state=tk.DISABLED)
+        for role, text in history:
+            self._append_message(role, text)
+        self._history_store = _store  # reconnect
+
+    def _append_suggestions_inline(self, suggestions):
+        """Show each suggestion as a one-line reason in the chat; click ▶ to expand full JSON."""
+        self._chat_text.config(state=tk.NORMAL)
+        self._chat_text.insert(tk.END, "\n  ✨ Glean AI\n", "ai_hdr")
+        _conf_sym = {"high": "●", "medium": "◐", "low": "○"}
+        for s in suggestions:
+            self._sugg_counter += 1
+            reason  = s.get("reason") or s.get("suggestion_label") or "Suggestion"
+            sym     = _conf_sym.get(s.get("confidence", ""), "●")
+            btn_tag = f"_suggbtn{self._sugg_counter}"
+            bod_tag = f"_suggbod{self._sugg_counter}"
+            lbl_col = f"  ▶ {sym} {reason}\n"
+            lbl_exp = f"  ▼ {sym} {reason}\n"
+            self._chat_text.tag_configure(btn_tag,
+                font=("Helvetica", 10), foreground="#93C5FD",
+                spacing1=2, lmargin1=10, lmargin2=10)
+            self._chat_text.tag_configure(bod_tag,
+                font=("Courier", 9), foreground="#94A3B8",
+                lmargin1=24, lmargin2=24, spacing3=1, elide=True)
+            self._chat_text.insert(tk.END, lbl_col, btn_tag)
+            self._chat_text.insert(tk.END, json.dumps(s, indent=2) + "\n", bod_tag)
+
+            def _make_toggle(b, d, s_exp, lc, le):
+                def _toggle(e):
+                    if s_exp[0]:
+                        self._chat_text.tag_configure(d, elide=True)
+                        self._set_btn_text(b, lc)
+                        s_exp[0] = False
+                    else:
+                        self._chat_text.tag_configure(d, elide=False)
+                        self._set_btn_text(b, le)
+                        s_exp[0] = True
+                return _toggle
+
+            _tog = _make_toggle(btn_tag, bod_tag, [False], lbl_col, lbl_exp)
+            self._chat_text.tag_bind(btn_tag, "<Button-1>", _tog)
+            self._chat_text.tag_bind(btn_tag, "<Enter>",
+                lambda e: self._chat_text.config(cursor="hand2"))
+            self._chat_text.tag_bind(btn_tag, "<Leave>",
+                lambda e: self._chat_text.config(cursor=""))
         self._chat_text.config(state=tk.DISABLED)
         self._chat_text.see(tk.END)
 
@@ -5228,8 +5596,10 @@ class GleanChatDialog(tk.Toplevel):
                     font=("Courier", 9), foreground="#94A3B8",
                     lmargin1=22, lmargin2=22, spacing3=1, elide=False)
 
+                # Show last 100 chars of the streaming text as a one-line preview
+                _preview = text.replace("\n", " ")[-100:]
                 self._chat_text.insert(tk.END,
-                    f"  💭 Thinking ▼  (streaming…)\n", self._th_btn_tag)
+                    f"  💭 Thinking ▼  {_preview}\n", self._th_btn_tag)
                 self._chat_text.mark_set("_th_s", tk.END)
                 self._chat_text.mark_gravity("_th_s", tk.LEFT)
                 self._chat_text.insert(tk.END, text, self._th_body_tag)
@@ -5242,11 +5612,13 @@ class GleanChatDialog(tk.Toplevel):
                 def _toggle(e, b=_btn, d=_bod, s=_exp):
                     if s[0]:
                         self._chat_text.tag_configure(d, elide=True)
-                        self._set_btn_text(b, "  💭 Thinking ▶  (click to show)")
+                        _prev = self._partial_text.replace("\n", " ")[-100:]
+                        self._set_btn_text(b, f"  💭 Thinking ▶  {_prev}\n")
                         s[0] = False
                     else:
                         self._chat_text.tag_configure(d, elide=False)
-                        self._set_btn_text(b, "  💭 Thinking ▼  (click to hide)")
+                        _prev = self._partial_text.replace("\n", " ")[-100:]
+                        self._set_btn_text(b, f"  💭 Thinking ▼  {_prev}\n")
                         s[0] = True
                 self._chat_text.tag_bind(self._th_btn_tag, "<Button-1>", _toggle)
                 self._chat_text.tag_bind(self._th_btn_tag, "<Enter>",
@@ -5255,7 +5627,11 @@ class GleanChatDialog(tk.Toplevel):
                     lambda e: self._chat_text.config(cursor=""))
                 self._partial_start = True
             else:
-                # ── Subsequent chunks: update body in-place ───────────────────
+                # ── Subsequent chunks: update button label and body in-place ──
+                _preview = text.replace("\n", " ")[-100:]
+                _exp_state = "▼" if self._chat_text.tag_cget(self._th_body_tag, "elide") == "0" else "▶"
+                self._set_btn_text(self._th_btn_tag,
+                    f"  💭 Thinking {_exp_state}  {_preview}\n")
                 self._chat_text.delete("_th_s", "_th_e")
                 self._chat_text.insert("_th_s", text, self._th_body_tag)
 
@@ -5266,6 +5642,8 @@ class GleanChatDialog(tk.Toplevel):
     def _clear_chat(self):
         """Clear all chat messages and start a fresh session."""
         self._chat_history.clear()
+        if self._history_store is not None:
+            self._history_store.clear()
         self._partial_start = False
         self._partial_text  = ""
         self._th_btn_tag    = None
@@ -5297,8 +5675,14 @@ class GleanChatDialog(tk.Toplevel):
         # Show what the user typed, plus attachment names
         display_user = text
         if self._attachments:
-            names = ", ".join(a["name"] for a in self._attachments)
-            display_user += f"\n  📎 {names}"
+            parts = []
+            for a in self._attachments:
+                icon = "🖼" if a.get("is_image") else "📎"
+                label = a["name"]
+                if a.get("size"):
+                    label += f" ({a['size']})"
+                parts.append(f"{icon} {label}")
+            display_user += "\n  " + "  ".join(parts)
         self._append_message("you", display_user)
         self._set_thinking(True)
 
@@ -5313,29 +5697,75 @@ class GleanChatDialog(tk.Toplevel):
                 issues_block += f"  • {path}{prop_str}: {msg}\n"
             issues_block += "</validation_issues>"
 
-        att_block = ""
+        # Build attachment block; collect image file IDs for uploadedFileIds
+        att_block   = ""
+        img_file_ids = []
         for att in self._attachments:
-            att_block += f"\n\n<attachment name=\"{att['name']}\">\n{att['content']}\n</attachment>"
+            if att.get("is_image"):
+                # Try uploading to Glean to get a real file ID first
+                img_bytes = att.get("image_bytes")
+                if img_bytes:
+                    fid = _glean_upload_file(img_bytes, att["name"])
+                    if fid:
+                        img_file_ids.append(fid)
+                        att_block += (
+                            f"\n\n<image name=\"{att['name']}\" "
+                            f"size=\"{att.get('size','')}\" "
+                            f"file_id=\"{fid}\" "
+                            f"note=\"Image uploaded to Glean — refer to it in your analysis.\"/>")
+                        continue
+                # Fallback: embed as base64 data URI in the prompt
+                att_block += (
+                    f"\n\n<image name=\"{att['name']}\" size=\"{att.get('size','')}\">"
+                    f"data:image/png;base64,{att['content']}"
+                    f"</image>")
+            else:
+                att_block += (
+                    f"\n\n<attachment name=\"{att['name']}\">"
+                    f"\n{att['content']}\n</attachment>")
 
         prompt = (
             f"{text}\n\n"
-            "Please analyze the fragment JSON below and return a structured JSON object with "
-            "specific CSS/style suggestions in this EXACT format:\n"
+            "Please analyze the fragment JSON below and return a JSON object with your suggestions.\n\n"
+            "## Supported operation types (use the best fit for each change):\n\n"
+            "**op: set_props** — set/remove properties on an existing node (default):\n"
+            '  {"op":"set_props","path":"Fragment.Slots.Default[0].Style","fix_props":{"width":"100%","gap":"16px"},"remove_props":["old-prop"]}\n\n'
+            "**op: merge_json** — deep-merge any keys (Style, CSSVariables, etc.) into a node:\n"
+            '  {"op":"merge_json","path":"Fragment.Slots.Default[0]","merge_data":{"Style":{"display":"flex"},"CSSVariables":{"--gap":"16px"}}}\n\n'
+            "**op: add_variable** — add/update a CSS variable in CSSVariables:\n"
+            '  {"op":"add_variable","path":"Fragment","variable_name":"--card-bg","variable_value":"#ffffff"}\n\n'
+            "**op: add_child** — insert a new container/component into a Slots array:\n"
+            '  {"op":"add_child","path":"Fragment.Slots.Default[0].Slots.Default","insert_index":0,"child_json":{"Type":"Container","Style":{"display":"flex"},"Slots":{"Default":[]}}}\n\n'
+            "**op: delete_node** — remove an existing node:\n"
+            '  {"op":"delete_node","path":"Fragment.Slots.Default[0].Slots.Default[2]"}\n\n'
+            "**op: replace_node** — replace an entire node with a new structure:\n"
+            '  {"op":"replace_node","path":"Fragment.Slots.Default[0]","replacement":{...new node...}}\n\n'
+            "Return your suggestions in this envelope:\n"
             "{\n"
             '  "suggestions": [\n'
             '    {\n'
             '      "issue_id": "unique_id",\n'
+            '      "op": "set_props",\n'
             '      "path": "Fragment.Slots.Default[0].Style",\n'
-            '      "prop": "cssPropertyName",\n'
-            '      "suggestion_label": "Short label",\n'
+            '      "reason": "One-line summary shown in chat (e.g. Set height:100% on flex child)",\n'
+            '      "suggestion_label": "Short human-readable label",\n'
             '      "message": "Explanation of what and why",\n'
-            '      "fix_props": {"prop1": "value1"},\n'
+            '      "fix_props": {},\n'
             '      "remove_props": [],\n'
-            '      "confidence": "high",\n'
+            '      "confidence": "high|medium|low",\n'
             '      "safe_to_auto_apply": true\n'
             '    }\n'
             '  ]\n'
             "}\n\n"
+            "Rules:\n"
+            "- Use op=set_props for simple property changes on Style/CSSVariables nodes.\n"
+            "- Use op=merge_json to add new keys to an existing node without touching other keys. IMPORTANT: merge_json MUST use the field name 'merge_data', never 'fix_props'.\n"
+            "- Use op=add_variable for any new/changed CSS custom property (--varName).\n"
+            "- Use op=add_child when a new container or component must be created.\n"
+            "- safe_to_auto_apply=true only when the change is non-destructive (additive or a clear fix).\n"
+            "- Paths use dot notation: Fragment.Slots.Default[0].Slots.Left[1].Style\n"
+            "- Return ONLY the JSON object. No prose, no bold headers, no markdown before or after the JSON.\n"
+            "- Spell all field names exactly: 'remove_props', 'safe_to_auto_apply', 'suggestion_label', 'merge_data'.\n\n"
             f"<fragment_json>\n{frag_json}\n</fragment_json>"
             f"{issues_block}"
             f"{att_block}"
@@ -5347,16 +5777,37 @@ class GleanChatDialog(tk.Toplevel):
 
         def _worker():
             try:
-                full_response = _glean_call_agent(prompt, on_partial=self._set_partial)
-                suggestions   = _glean_extract_suggestions(full_response)
-                # Strip only the JSON block, keep any natural language text
+                full_response = _glean_call_agent(
+                    prompt,
+                    on_partial=self._set_partial,
+                    uploaded_file_ids=img_file_ids if img_file_ids else None,
+                )
+                suggestions, full_frag = _glean_extract_suggestions(full_response)
+                # If Glean returned a complete updated fragment, surface it as a
+                # reviewable suggestion so the user can approve before applying.
+                if full_frag and isinstance(full_frag, dict):
+                    suggestions = list(suggestions) + [{
+                        "issue_id": "_full_fragment",
+                        "op": "set_fragment",
+                        "path": "",
+                        "suggestion_label": "Apply Glean's complete fragment rewrite",
+                        "message": "Replace the entire fragment with Glean's updated version (all layout, CSS vars, containers included).",
+                        "new_fragment": full_frag,
+                        "confidence": "medium",
+                        "safe_to_auto_apply": False,
+                    }]
+                # Strip only the JSON block, keep natural-language text
                 import re as _re
-                display_text = _re.sub(r'```(?:json)?\s*\{[^`]*?\}[^`]*?\s*```', '', full_response, flags=_re.DOTALL).strip()
+                display_text = _re.sub(
+                    r'```(?:json)?\s*\{.*?\}\s*```', '', full_response,
+                    flags=_re.DOTALL).strip()
                 if not display_text and suggestions:
-                    display_text = f"Analysis complete — {len(suggestions)} suggestion(s) found. See the panel below."
+                    display_text = (
+                        f"Analysis complete — {len(suggestions)} suggestion(s) found.\n"
+                        "Review them in the panel below and click Apply.")
                 elif not display_text:
                     display_text = full_response.strip() or "No response received from Glean."
-                self.after(0, lambda: self._on_response(display_text, suggestions))
+                self.after(0, lambda s=suggestions: self._on_response(display_text, s))
             except Exception as exc:
                 self.after(0, lambda: self._on_error(str(exc)))
 
@@ -5365,16 +5816,22 @@ class GleanChatDialog(tk.Toplevel):
     def _on_response(self, text, suggestions):
         self._set_thinking(False)
         if self._partial_start and self._th_btn_tag:
-            # Collapse thinking section and update header to show char count
-            n = len(self._partial_text)
+            # Collapse thinking section — show last 100 chars as preview
+            _prev = self._partial_text.replace("\n", " ")[-100:]
             self._chat_text.config(state=tk.NORMAL)
             self._chat_text.tag_configure(self._th_body_tag, elide=True)
             self._set_btn_text(self._th_btn_tag,
-                f"  💭 Thinking ▶  ({n:,} chars — click to show)")
+                f"  💭 Thinking ▶  {_prev}\n")
             self._chat_text.config(state=tk.DISABLED)
         self._partial_text  = ""
         self._partial_start = False
-        self._append_message("ai", text)
+        if suggestions:
+            # Show natural language text only if it isn't the generic fallback
+            if text and not text.startswith("Analysis complete —"):
+                self._append_message("ai", text)
+            self._append_suggestions_inline(suggestions)
+        else:
+            self._append_message("ai", text)
         self._suggestions = suggestions
         if suggestions:
             self._show_suggestions_panel(suggestions)
@@ -5415,9 +5872,15 @@ class GleanChatDialog(tk.Toplevel):
             row.pack(fill=tk.X, pady=2)
             tk.Checkbutton(row, variable=var, bg="#273344",
                            activebackground="#273344").pack(side=tk.LEFT)
-            tk.Label(row, text=s.get("suggestion_label","Suggestion"),
+            _content = tk.Frame(row, bg="#273344")
+            _content.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+            tk.Label(_content, text=s.get("suggestion_label","Suggestion"),
                      bg="#273344", fg="white", font=("Helvetica",10,"bold"),
-                     anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+                     anchor="w").pack(anchor="w")
+            _reason = s.get("reason","")
+            if _reason:
+                tk.Label(_content, text=_reason, bg="#273344", fg="#94A3B8",
+                         font=("Helvetica",9), anchor="w").pack(anchor="w")
             tk.Label(row, text=s.get("confidence","").upper(),
                      bg="#273344", fg=conf_color,
                      font=("Helvetica",8,"bold")).pack(side=tk.LEFT, padx=6)
@@ -5441,32 +5904,49 @@ class GleanChatDialog(tk.Toplevel):
             self._append_message("error", "No suggestions selected.")
             return
         applied, failed = 0, 0
-        applied_labels = []
+        applied_labels  = []
+        # Track whether any structural ops were applied (add_child, delete_node,
+        # replace_node, set_fragment, merge_json) — these need a full tree rebuild.
+        _STRUCTURAL = {'add_child', 'delete_node', 'replace_node',
+                        'set_fragment', 'merge_json', 'add_variable'}
+        structural_change = False
         for s in subset:
             if _glean_apply_suggestion(self.fragment_root, s):
                 applied += 1
                 applied_labels.append(s.get("suggestion_label", "fix"))
+                if s.get('op', 'set_props') in _STRUCTURAL:
+                    structural_change = True
             else:
                 failed += 1
-        # Show in-chat result notification
+        # In-chat notification
         if applied:
             lines = [f"✅ Applied {applied} fix(es) to the fragment:"]
             for lbl in applied_labels:
                 lines.append(f"   • {lbl}")
             if failed:
-                lines.append(f"⚠ {failed} could not be applied (path not found).")
+                lines.append(f"⚠ {failed} could not be applied (path not found in fragment).")
+            if structural_change:
+                lines.append("\n🔄 Structural changes made — fragment tree rebuilt.")
             lines.append("\n💡 Open Align Fix to validate the changes look correct.")
             self._append_message("ai", "\n".join(lines))
         else:
             self._append_message("error",
                 f"All {failed} suggestion(s) failed (paths not found in fragment).")
-        # Show Validate button
+            return
         self._show_validate_bar(applied)
-        if self.on_apply_cb:
-            self.on_apply_cb()
-        self._sugg_outer.pack_forget()
+        # Clean up suggestions panel before triggering the import (which may
+        # call update_idletasks and flush events while widgets still exist).
+        try:
+            if self._sugg_outer.winfo_exists():
+                self._sugg_outer.pack_forget()
+        except tk.TclError:
+            pass
         self._suggestions.clear()
         self._suggestion_vars.clear()
+        # Defer on_apply_cb so this event handler fully returns first —
+        # _process_import calls update_idletasks internally and can destroy widgets.
+        if self.on_apply_cb:
+            self.after(0, self.on_apply_cb)
 
     def _show_validate_bar(self, applied_count):
         """Show a banner with a button to open Align Fix for validation."""
@@ -7427,17 +7907,39 @@ class AlignFixDialog(tk.Toplevel):
         def _after_apply():
             self._rebuild_tree()
             self.status_var.set("Glean AI suggestions applied ✓")
+            # Write modifications back to main Designer canvas so export reflects changes.
+            # Use a hidden dummy window so _process_import's window.destroy() doesn't
+            # kill the main designer and the success dialog is suppressed.
+            if self._v5:
+                try:
+                    _dummy = tk.Toplevel(self._v5)
+                    _dummy._silent_import = True
+                    _dummy.withdraw()
+                    self._v5._process_import(
+                        json.dumps(self.fragment_root, indent=2), _dummy)
+                except Exception:
+                    pass
         # Parent + store on root Designer so the window outlives AlignFix close/reopen
         _root = self._v5 if self._v5 else self
+        # Ensure persistent history store exists on root — survives dialog recreation
+        if not hasattr(_root, '_glean_chat_history'):
+            _root._glean_chat_history = []
+        _store = _root._glean_chat_history
         win = getattr(_root, "_glean_chat_win_af", None)
         if win and win.winfo_exists():
-            win.fragment_root       = self.fragment_root
-            win._validation_issues  = issues
+            # Always refresh context; also update callback so it targets THIS AlignFix instance
+            win.fragment_root      = self.fragment_root
+            win._validation_issues = issues
+            win.on_apply_cb        = _after_apply
             win.deiconify()
             win.lift()
             return
+        # Window gone — recreate and restore history from the root-owned store
         dlg = GleanChatDialog(_root, self.fragment_root,
-                              on_apply_cb=_after_apply, validation_issues=issues)
+                              on_apply_cb=_after_apply, validation_issues=issues,
+                              history_store=_store)
+        if _store:
+            dlg._restore_chat_history(_store)
         _root._glean_chat_win_af = dlg
 
     # ═══════ auto-tune ════════════════════════════════════════════════════════
@@ -10784,16 +11286,35 @@ class Designer(tk.Tk):
             return
         frag = self._build_fragment()
         fragment_root = frag.get("Fragment", frag)
-        # Reuse existing window if still open — update fragment then show
+        if not hasattr(self, '_glean_chat_history'):
+            self._glean_chat_history = []
+        _store = self._glean_chat_history
+
+        # Define callback BEFORE the reuse check so the reference is always valid
+        def _after_apply():
+            try:
+                wrapped = frag if "Fragment" in frag else {"Fragment": fragment_root}
+                _dummy = tk.Toplevel(self)
+                _dummy._silent_import = True
+                _dummy.withdraw()
+                self._process_import(json.dumps(wrapped, indent=2), _dummy)
+                if hasattr(self, 'status_var'):
+                    self.status_var.set("✓ Glean AI suggestions applied")
+            except Exception as exc:
+                messagebox.showerror("Glean AI", f"Apply failed: {exc}", parent=self)
+
         win = getattr(self, "_glean_chat_win", None)
         if win and win.winfo_exists():
             win.fragment_root = fragment_root
+            win.on_apply_cb   = _after_apply
             win.deiconify()
             win.lift()
             return
-        dlg = GleanChatDialog(self, fragment_root,
-                              on_apply_cb=lambda: messagebox.showinfo(
-                                  "Glean AI", "Suggestions applied. Re-export to see changes."))
+        # Window gone — recreate and restore history from the root-owned store
+        dlg = GleanChatDialog(self, fragment_root, on_apply_cb=_after_apply,
+                              history_store=_store)
+        if _store:
+            dlg._restore_chat_history(_store)
         self._glean_chat_win = dlg
 
     # ── JSON IMPORT ──────────────────────────────────────────────────
@@ -11758,7 +12279,10 @@ class Designer(tk.Tk):
                     f"{n_cards} card(s), {n_filters} filter(s)")
             # Save original fragment tree for round-trip integrity check (debug mode).
             self.imported_fragment_root = copy.deepcopy(data.get("Fragment", data))
-            window.destroy(); messagebox.showinfo("Success", "Fragment imported successfully!")
+            if getattr(window, '_silent_import', False):
+                window.destroy()  # dummy window only — main designer stays open
+            else:
+                window.destroy(); messagebox.showinfo("Success", "Fragment imported successfully!")
             if not self.strict_roundtrip_import.get():
                 self.after(500, self._do_import_layout)
 
