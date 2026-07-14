@@ -103,6 +103,22 @@ export default function ConfigStep({
     if (data.category) updates.category = Array.isArray(data.category) ? data.category.join(', ') : String(data.category)
     if (data.agentRootResourceFolders) updates.folders = data.agentRootResourceFolders
     if (data.defaults) updates.defaults = Object.fromEntries(Object.entries(data.defaults).map(([k, v]) => [k, String(v)]))
+
+    // Optional fields the prompt only includes when the user explicitly asked for that specific
+    // behavior (e.g. "make it conversational") — must check !== undefined, not truthiness, since
+    // these are booleans and "false" is a real, intentional value (e.g. "not discoverable").
+    for (const key of [
+      'discoverable', 'dataAgent', 'conversational', 'voiceEnabled', 'allowAttachment',
+      'resourceControlled', 'autoGrantSubAgents', 'autoEnablement', 'includeSubAgentIntents',
+      'allowSubagentTransition',
+    ]) {
+      if (data[key] !== undefined) updates[key] = !!data[key]
+    }
+    if (data.lifecycleStage) updates.lifecycleStage = String(data.lifecycleStage)
+    if (data.imageUrl) updates.imageUrl = String(data.imageUrl)
+    if (data.resourceId) updates.resourceId = String(data.resourceId)
+    if (data.agentSequence !== undefined) updates.agentSequence = String(data.agentSequence)
+
     onConfigChange(prev => ({ ...prev, ...updates }))
   }
 

@@ -181,6 +181,26 @@ CONFIG MODE RULES
 - Do not return unsupported top-level keys unless the user explicitly asks for a manual full agent JSON
 - If the user asks for one property, still return a valid config object with only the relevant supported keys plus any clearly implied companion fields
 
+OPTIONAL CONFIG FIELDS — include ONLY the ones the user's request actually implies, using these
+exact key names and types (never invent different names/casing for these):
+  conversational          bool  — "make it conversational", "conversational agent"
+  voiceEnabled             bool  — "voice enabled", "supports voice"
+  allowAttachment          bool  — "allow attachments", "let users attach files"
+  resourceControlled       bool  — "resource controlled", "restrict by resource"
+  dataAgent                bool  — "data agent", "not a data agent"
+  discoverable             bool  — "discoverable", "hidden agent" / "not discoverable" → false
+  autoGrantSubAgents       bool  — "auto grant sub agents"
+  autoEnablement           bool  — "auto enablement" / "manual enablement" → false
+  includeSubAgentIntents   bool  — "include sub agent intents"
+  allowSubagentTransition  bool  — "allow subagent transition"
+  lifecycleStage           str   — GENERAL_AVAILABILITY | BETA | ALPHA | DEPRECATED — "set lifecycle to beta"
+  imageUrl                 str   — "use icon <path>"
+  resourceId               str   — "resource id <value>"
+  agentSequence            str   — "sequence <n>"
+If the user says "create a conversational agent", you MUST include "conversational": true in the
+returned object — omitting it because it's not in the base key list above is wrong; the base list
+is for plain autofill with no explicit ask, not a hard ceiling on what CONFIG MODE can ever return.
+
 FLOW MODE RULES
 ────────────────────────────────────────────────────────────
 In FLOW MODE return exactly one JSON array.
