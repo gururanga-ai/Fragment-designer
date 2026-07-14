@@ -38,6 +38,10 @@ GLEAN_BASE       = "https://manhattan-associates-be.glean.com/api/v1"
 GLEAN_HOST       = "manhattan-associates-be.glean.com"
 GLEAN_ORIGIN     = f"https://{GLEAN_HOST}"
 
+# Manhattan Active platform OAuth — same "omnicomponent.1.0.0" client used by the other internal
+# scripts in this repo (Archived Tools/mawmfunc.py) for password-grant token retrieval.
+MANH_OAUTH_CLIENT_BASIC = "Basic b21uaWNvbXBvbmVudC4xLjAuMDpiNHM4cmdUeWc1NVhZTnVu"
+
 # Cookies persisted to disk so they survive hot-reloads and restarts
 _COOKIE_FILE = pathlib.Path(__file__).parent / ".glean_cookies.json"
 
@@ -196,6 +200,21 @@ class AgentRequest(BaseModel):
     fragment_json: dict = Field(default_factory=dict)
     issues: list = Field(default_factory=list)
     conversation: list[ChatMessage] = Field(default_factory=list)
+
+
+class StackTokenRequest(BaseModel):
+    stackName: str
+    username: str
+    password: str
+
+
+class StackPublishRequest(BaseModel):
+    stackName: str
+    accessToken: str
+    org: str
+    facilityId: str
+    businessUnit: str | None = None
+    agent: dict
 
 
 # ── Routes ────────────────────────────────────────────────────────────
@@ -552,6 +571,71 @@ async def download_extension():
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=mawm-glean-bridge-extension.zip"},
     )
+
+
+# ── Manhattan Active stack login + publish ──────────────────────────────────
+# Neither route stores the token/credentials server-side — both are stateless pass-throughs.
+# The frontend keeps the access token in its own localStorage, per browser/user, same lesson
+# learned from the Glean cookie-sharing issue: a shared backend must never hold one person's
+# credentials on behalf of everyone hitting it.
+
+@app.post("/api/stack/token")
+async def stack_token(req: StackTokenRequest):
+    """Password-grant OAuth against a Manhattan Active stack. Returns the access token only —
+    never persisted here."""
+    auth_url = f"https://{req.stackName}-auth.sce.manh.com/oauth/token"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(
+                auth_url,
+                headers={
+                    "Authorization": MANH_OAUTH_CLIENT_BASIC,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"grant_type": "password", "username": req.username, "password": req.password},
+                timeout=30,
+            )
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"Could not reach {auth_url}: {exc}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Stack login failed: {resp.text[:300]}")
+
+    data = resp.json()
+    if not data.get("access_token"):
+        raise HTTPException(status_code=502, detail="Stack auth response had no access_token")
+    return {"access_token": data["access_token"], "expires_in": data.get("expires_in")}
+
+
+@app.post("/api/stack/publish")
+async def stack_publish(req: StackPublishRequest):
+    """Publishes an agent to a Manhattan Active stack via commonui-facade. Caller supplies the
+    access token per-request (see /api/stack/token) — nothing is cached here."""
+    save_url = f"https://{req.stackName}.sce.manh.com/commonui-facade/api/commonui-facade/chatbot/agent/save"
+    headers = {
+        "Authorization": f"Bearer {req.accessToken}",
+        "SelectedOrganization": req.org,
+        "SelectedLocation": req.facilityId,
+        "Content-Type": "application/json",
+    }
+    if req.businessUnit:
+        headers["SelectedBusinessUnit"] = req.businessUnit
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(save_url, headers=headers, json=req.agent, timeout=60)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"Could not reach {save_url}: {exc}")
+
+    try:
+        body = resp.json()
+    except Exception:
+        body = {"raw": resp.text[:2000]}
+
+    if not resp.is_success:
+        detail = body if isinstance(body, str) else json.dumps(body)[:2000]
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+    return body
 
 
 # Serve the built frontend (npm run build → dist/) when present, so a single process can

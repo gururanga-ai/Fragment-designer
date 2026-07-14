@@ -107,6 +107,37 @@ export function buildAgentJson(config, flows, agentContentsCustom) {
 }
 
 /**
+ * Builds the payload for POST {{url}}/commonui-facade/api/commonui-facade/chatbot/agent/save —
+ * the stack's "publish agent" endpoint. Distinct shape from buildAgentJson's output: PascalCase
+ * top-level fields, contents pulled out as their own array, and the full agent definition
+ * embedded as a stringified "Content" field (contents/hasExtensionPoint stripped from it since
+ * they're represented separately as AgentContentsCustom).
+ */
+export function buildPublishPayload(config, flows, agentContentsCustom) {
+  const agentJson = buildAgentJson(config, flows, agentContentsCustom)
+  const { agentContentsCustom: _contents, hasExtensionPoint: _hep, ...contentBody } = agentJson
+
+  return {
+    AgentId: agentJson.agentId,
+    Description: agentJson.description,
+    AgentDiscoverable: agentJson.agentDiscoverable,
+    Conversational: agentJson.conversational,
+    HasEnablementFlow: agentJson.hasEnablementFlow,
+    LifecycleStage: agentJson.lifecycleStage,
+    ImageUrl: agentJson.imageUrl,
+    AgentContentsCustom: (agentContentsCustom || []).map(item => ({
+      Content: typeof (item.Content ?? item.content) === 'string'
+        ? (item.Content ?? item.content)
+        : JSON.stringify(item.Content ?? item.content),
+      AgentContentType: item.AgentContentType || item.agentContentType || 'inputs',
+      Name: item.Name || item.name,
+    })),
+    Content: JSON.stringify(contentBody),
+    Actions: { AgentContentsCustom: 'RESET', AgentCustom: 'RESET' },
+  }
+}
+
+/**
  * Loads an imported agent JSON into config/flows/contents state.
  */
 export function parseAgentJson(data) {
