@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #F1F5F9; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* Dark scrollbar for chat panels */
+.dark-scroll::-webkit-scrollbar-track { background: #0F172A; }
+.dark-scroll::-webkit-scrollbar-thumb { background: #334155; }
+
+/* Canvas horizontal scroll */
+.canvas-scroll { overflow-x: auto; overflow-y: hidden; }
+
+/* Transition helpers */
+.card-hover { transition: box-shadow 0.15s, transform 0.1s; }
+.card-hover:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); transform: translateY(-1px); }
+
+/* Fragment tree indentation */
+.tree-line { border-left: 2px solid #CBD5E1; margin-left: 12px; padding-left: 12px; }

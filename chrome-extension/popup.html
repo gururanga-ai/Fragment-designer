@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 280px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0F172A;
+      color: #E2E8F0;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #64748B;
+      flex-shrink: 0;
+    }
+    .dot.ok      { background: #34D399; box-shadow: 0 0 6px #34D399; }
+    .dot.warn    { background: #FBBF24; }
+    .dot.error   { background: #F87171; }
+    h2 { font-size: 14px; font-weight: 700; color: #60A5FA; }
+    .sub { font-size: 11px; color: #64748B; margin-top: 1px; }
+    .card {
+      background: #1E293B;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    .label { color: #94A3B8; font-size: 11px; margin-bottom: 2px; }
+    .value { color: #E2E8F0; font-weight: 600; }
+    .value.ok    { color: #34D399; }
+    .value.error { color: #F87171; }
+    .value.warn  { color: #FBBF24; }
+    button {
+      width: 100%;
+      padding: 8px;
+      background: #1E3A8A;
+      color: #93C5FD;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    button:hover { background: #2563EB; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="dot" id="dot"></div>
+    <div>
+      <h2>MAWM Glean Bridge</h2>
+      <div class="sub">Session cookie → localhost:8000</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Status</div>
+    <div class="value" id="status-text">Checking…</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Last pushed</div>
+    <div class="value" id="last-push">—</div>
+  </div>
+
+  <button id="push-btn">Push Cookie Now</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "MAWM Glean Session Bridge",
+  "version": "1.0.0",
+  "description": "Automatically forwards the Glean session cookie to the local MAWM Agent Tools backend.",
+
+  "permissions": ["cookies", "storage"],
+  "host_permissions": [
+    "*://*.glean.com/*",
+    "http://localhost:8000/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MAWM Glean Session Bridge"
+  },
+
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
