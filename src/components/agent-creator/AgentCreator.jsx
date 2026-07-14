@@ -103,7 +103,7 @@ function PasteAgentJsonModal({ onImport, onClose }) {
   )
 }
 
-export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHandoffToDesigner }) {
+export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHandoffToDesigner, onSyncFragmentSilently }) {
   const [step, setStep] = useState(0)
   const [config, setConfig] = useState(DEFAULT_CONFIG)
   const [flows, setFlows] = useState({ default: { default: [] } })
@@ -348,6 +348,7 @@ export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHa
             contents={contents}
             onContentsChange={setContents}
             onHandoffToDesigner={onHandoffToDesigner}
+            onSyncFragmentSilently={onSyncFragmentSilently}
           />
         )}
         {step === 1 && (
@@ -373,6 +374,7 @@ export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHa
           contents={contents}
           onContentsChange={setContents}
           onClose={() => setShowContents(false)}
+          onHandoffToDesigner={onHandoffToDesigner}
         />
       )}
     </div>

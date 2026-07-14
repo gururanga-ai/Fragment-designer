@@ -4,7 +4,7 @@ import JsonEditor from '../shared/JsonEditor'
 
 const STARTER = { Name: 'myContent', AgentContentType: 'inputs', Content: '' }
 
-export default function ContentsManager({ contents, onContentsChange, onClose }) {
+export default function ContentsManager({ contents, onContentsChange, onClose, onHandoffToDesigner }) {
   const [selIdx, setSelIdx] = useState(null)
   const [editing, setEditing] = useState(null) // { idx: number|null, json: object }
 
@@ -59,6 +59,9 @@ export default function ContentsManager({ contents, onContentsChange, onClose })
         <Btn label="Edit Selected" onClick={openEdit} disabled={selIdx === null} amber />
         <Btn label="Delete Selected" onClick={handleDelete} disabled={selIdx === null} red />
         <Btn label="Import JSON Array" onClick={handleImport} />
+        {sel && (sel.AgentContentType || sel.agentContentType) === 'fragment' && onHandoffToDesigner && (
+          <Btn label="🎨 Edit in Designer" onClick={() => onHandoffToDesigner({ ...sel })} />
+        )}
       </div>
 
       <div className="flex h-[500px]">

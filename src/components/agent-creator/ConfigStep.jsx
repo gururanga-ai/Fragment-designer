@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import GleanChat from '../shared/GleanChat'
 import Modal from '../shared/Modal'
-import { gleanChat } from '../../utils/gleanApi'
+import { gleanChat, gleanRunWorkflow } from '../../utils/gleanApi'
 import { extractJson } from '../../utils/agentBuilder'
 
 const LIFECYCLE_OPTS = ['GENERAL_AVAILABILITY', 'BETA', 'ALPHA', 'DEPRECATED']
@@ -51,6 +51,7 @@ export default function ConfigStep({
   flows, onFlowsChange,
   contents, onContentsChange,
   onHandoffToDesigner,
+  onSyncFragmentSilently,
 }) {
   const [chatOpen, setChatOpen] = useState(false)
   const [autofillOpen, setAutofillOpen] = useState(false)
@@ -201,47 +202,104 @@ export default function ConfigStep({
       } else { errors.push('Flow: no JSON array found in response') }
     } catch (e) { errors.push(`Flow: ${e.message}`) }
 
-    // Call 3: create fragment content item + link renderUI (if flow has renderUI or desc implies UI)
+    // Call 3: actually generate the fragment UI (not just a placeholder) + link renderUI + make
+    // it visible in Fragment Designer without forcing a tab switch away from this review screen.
     const hasRenderUI = Array.isArray(flowData) && flowData.some(a => a.type === 'renderUI')
-    const wantsFragment = /fragment|render\s*ui|dashboard|UI\s*layout/i.test(desc)
+    // Broad on purpose: "display/show X" often gets flow-generated as a chat data response
+    // (addDataResponse) rather than a renderUI action, since that's a valid conversational-agent
+    // answer too — but a user asking to "display"/"show" something usually wants an actual
+    // rendered UI, not just raw data in the chat reply, so treat these as a fragment request too.
+    const wantsFragment = /fragment|render\s*ui|dashboard|ui\s*layout|display|shows?\b|showing|screen|table|grid|chart|report|card/i.test(desc)
     if (hasRenderUI || wantsFragment) {
-      setStatus('⏳ Step 3/3: Generating fragment layout intent...')
+      const rawId = (config.agentId || '').replace(/^ext-/, '') || (config.agentName || '').replace(/\s+/g, '') || 'agent'
+      const contentName = rawId.charAt(0).toUpperCase() + rawId.slice(1) + 'Fragment'
+      let layoutIntent = desc
+      let generatedFragment = null
+
+      setStatus('⏳ Step 3/3: Designing fragment layout...')
       try {
+        // First pass: turn the (possibly vague) description into a concrete, specific layout
+        // intent — container types, data bindings, filters, columns — GENERATION MODE below
+        // relies on this level of detail to produce a real fragment rather than a stub.
         const fragPrompt = `Create fragment UI — suggest a fragment layout for this agent: ${desc}`
         let fragText = ''
         await gleanChat({ conversation: [{ role: 'user', text: fragPrompt }], useDeepResearch: deepResearch, onPartial: t => { fragText = t } })
         const fragData = extractJson(fragText)
-        if (fragData?.mode === 'fragment_handoff') {
-          const rawId = (config.agentId || '').replace(/^ext-/, '') || (config.agentName || '').replace(/\s+/g, '') || 'agent'
-          const contentName = rawId.charAt(0).toUpperCase() + rawId.slice(1) + 'Fragment'
-          const layoutIntent = fragData.payload?.user_prompt || desc
+        if (fragData?.mode === 'fragment_handoff' && fragData.payload?.user_prompt) {
+          layoutIntent = fragData.payload.user_prompt
+        }
 
-          const newContent = {
-            Name: contentName,
-            AgentContentType: 'fragment',
-            language: '',
-            Content: '{}',
-            description: layoutIntent,
-          }
+        // Second pass: actually generate the fragment JSON (ALIGN_FIX_SYSTEM GENERATION MODE —
+        // triggered by an empty fragment_json), instead of leaving a Content:'{}' stub that only
+        // got filled in if the user separately clicked "Edit in Designer" and waited for Glean.
+        // Generation is observed to occasionally return non-fragment output (suggestions/prose)
+        // for the exact same prompt — one retry meaningfully improves the odds of a real result.
+        for (let attempt = 1; attempt <= 2 && !generatedFragment; attempt++) {
+          setStatus(`⏳ Step 3/3: Generating fragment JSON${attempt > 1 ? ' (retry)' : ''}...`)
+          let genText = ''
+          await gleanRunWorkflow({
+            prompt: layoutIntent,
+            fragment_json: {},
+            issues: [],
+            conversation: [],
+            useDeepResearch: deepResearch,
+            onPartial: t => { genText = t },
+          })
+          const generated = extractJson(genText)
+          if (generated?.Fragment) generatedFragment = generated
+        }
+      } catch (e) {
+        errors.push(`Fragment: ${e.message}`)
+      }
 
-          // Add fragment content item (skip if same name already exists)
-          onContentsChange(prev => prev.some(c => (c.Name || c.name) === contentName) ? prev : [...prev, newContent])
+      const newContent = {
+        Name: contentName,
+        AgentContentType: 'fragment',
+        language: '',
+        Content: generatedFragment ? JSON.stringify(generatedFragment, null, 2) : '{}',
+        description: layoutIntent,
+      }
+      if (!generatedFragment) errors.push('Fragment: generation returned no usable layout — open "Edit in Designer" on the renderUI card to generate manually')
 
-          // Link renderUI action → content name + embed _fragment_json for Edit in Designer
-          if (hasRenderUI) {
-            onFlowsChange(prev => {
-              const f = JSON.parse(JSON.stringify(prev))
-              if (!f.default?.default) return prev
-              f.default.default = f.default.default.map(a =>
-                (a.type === 'renderUI' && !a.inputJSON)
-                  ? { ...a, inputJSON: contentName, _fragment_json: newContent }
-                  : a
-              )
-              return f
+      // Add/replace fragment content item (dedupe by name — a rerun shouldn't leave two copies)
+      onContentsChange(prev => {
+        const idx = prev.findIndex(c => (c.Name || c.name) === contentName)
+        if (idx === -1) return [...prev, newContent]
+        const next = [...prev]; next[idx] = newContent; return next
+      })
+
+      // Link renderUI action → content name + embed _fragment_json for Edit in Designer.
+      // If the flow step didn't produce a renderUI action at all (e.g. it chose a chat-style
+      // addDataResponse instead), append one so the fragment is actually wired into the flow —
+      // a fragment with nothing rendering it would just sit unused in the Contents library.
+      {
+        onFlowsChange(prev => {
+          const f = JSON.parse(JSON.stringify(prev))
+          if (!f.default?.default) return prev
+          const already = f.default.default.some(a => a.type === 'renderUI' && !a.inputJSON)
+          f.default.default = f.default.default.map(a =>
+            (a.type === 'renderUI' && !a.inputJSON)
+              ? { ...a, inputJSON: contentName, _fragment_json: newContent }
+              : a
+          )
+          if (!hasRenderUI && !already) {
+            f.default.default.push({
+              type: 'renderUI',
+              name: 'showResults',
+              description: 'Render the generated fragment UI.',
+              inputJSON: contentName,
+              input: {},
+              output: {},
+              _fragment_json: newContent,
             })
           }
-        }
-      } catch (_) { /* fragment step is best-effort */ }
+          return f
+        })
+      }
+
+      // Load it into Fragment Designer in the background (no tab switch) so it's already there
+      // whenever the user clicks over — matches "Edit in Designer" showing the exact same content.
+      if (generatedFragment) onSyncFragmentSilently?.(newContent)
     }
 
     const parts = []

@@ -382,37 +382,58 @@ export default function FlowBuilder({
   const taskKeys = Object.keys(flows[flowId] || {})
   const actions = (flows[flowId]?.[taskId] || []).map((a, i) => ({ ...a, _id: a._id || `${i}-${a.type}` }))
 
-  const searchHits = useMemo(() => {
+  // Hits across every task of every flow — {flowId, taskId, idx} in flow/task/action order.
+  // Lets search hop between tasks instead of only matching within the currently open one.
+  const globalHits = useMemo(() => {
     const term = search.trim().toLowerCase()
     if (!term) return []
-    return actions.reduce((acc, a, i) => {
-      if (JSON.stringify(a).toLowerCase().includes(term)) acc.push(i)
-      return acc
-    }, [])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, actions.length, flowId, taskId])
+    const hits = []
+    for (const [fId, tasks] of Object.entries(flows)) {
+      for (const [tId, acts] of Object.entries(tasks)) {
+        ;(acts || []).forEach((a, i) => {
+          if (JSON.stringify(a).toLowerCase().includes(term)) hits.push({ flowId: fId, taskId: tId, idx: i })
+        })
+      }
+    }
+    return hits
+  }, [search, flows])
 
-  // Auto-jump to first hit when search term changes
+  // Hits within the currently visible task only — used for the yellow-ring card highlight.
+  const searchHits = useMemo(
+    () => globalHits.filter(h => h.flowId === flowId && h.taskId === taskId).map(h => h.idx),
+    [globalHits, flowId, taskId]
+  )
+
+  const [pendingScroll, setPendingScroll] = useState(null)
+  useEffect(() => {
+    if (pendingScroll === null) return
+    requestAnimationFrame(() => {
+      document.getElementById(`flow-card-${pendingScroll}`)?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+    })
+    setPendingScroll(null)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowId, taskId, pendingScroll])
+
+  const jumpToHit = hit => {
+    if (hit.flowId !== flowId) setFlowId(hit.flowId)
+    if (hit.taskId !== taskId) setTaskId(hit.taskId)
+    setSelIdx(hit.idx)
+    setPendingScroll(hit.idx)
+  }
+
+  // Auto-jump to first hit (anywhere) when search term changes
   useEffect(() => {
     if (!search.trim()) return
     setSearchHitIdx(0)
-    if (searchHits.length > 0) {
-      setSelIdx(searchHits[0])
-      requestAnimationFrame(() => {
-        document.getElementById(`flow-card-${searchHits[0]}`)?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
-      })
-    }
+    if (globalHits.length > 0) jumpToHit(globalHits[0])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
   const searchNav = dir => {
-    if (!searchHits.length) return
-    const next = ((searchHitIdx + dir) + searchHits.length) % searchHits.length
+    if (!globalHits.length) return
+    const next = ((searchHitIdx + dir) + globalHits.length) % globalHits.length
     setSearchHitIdx(next)
-    setSelIdx(searchHits[next])
-    requestAnimationFrame(() => {
-      document.getElementById(`flow-card-${searchHits[next]}`)?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
-    })
+    jumpToHit(globalHits[next])
   }
 
   const clearSearch = () => { setSearch(''); setSearchHitIdx(0) }
@@ -757,12 +778,15 @@ export default function FlowBuilder({
           onChange={e => setSearch(e.target.value)}
           className="border rounded px-2 py-1 text-xs w-36 bg-white focus:outline-none focus:border-[#2563EB]"
         />
-        {searchHits.length > 0 && (
-          <span className="text-xs font-semibold text-[#1E3A8A] bg-[#DBEAFE] px-2 py-0.5 rounded-full">
-            {searchHitIdx + 1}/{searchHits.length}
+        {globalHits.length > 0 && (
+          <span className="text-xs font-semibold text-[#1E3A8A] bg-[#DBEAFE] px-2 py-0.5 rounded-full" title="Matches across all flows/tasks">
+            {searchHitIdx + 1}/{globalHits.length}
+            {globalHits[searchHitIdx] && (globalHits[searchHitIdx].flowId !== flowId || globalHits[searchHitIdx].taskId !== taskId) && (
+              <> — {globalHits[searchHitIdx].flowId}/{globalHits[searchHitIdx].taskId}</>
+            )}
           </span>
         )}
-        {search && searchHits.length === 0 && (
+        {search && globalHits.length === 0 && (
           <span className="text-xs text-[#EF4444] font-medium">no match</span>
         )}
         <Btn label="◀ Prev" bg="#F1F5F9" fg="#374151" onClick={() => searchNav(-1)} />

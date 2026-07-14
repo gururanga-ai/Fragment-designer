@@ -21,6 +21,15 @@ export default function App() {
     setActiveTab('fragment')
   }
 
+  // Same as handleHandoff but doesn't steal focus — used when Full Autofill auto-generates a
+  // fragment, so it's already loaded and waiting whenever the user clicks over to the Fragment
+  // Designer tab themselves, without yanking them out of the Config/Build Flow step mid-review.
+  // FragmentDesigner stays mounted (just CSS-hidden) while on the Agent Creator tab, so its
+  // handoff effect still runs immediately in the background.
+  const handleSilentSync = (fragment) => {
+    setHandoffFragment(fragment)
+  }
+
   return (
     <div className="flex flex-col h-screen bg-[#F8FAFC]">
       {/* App header */}
@@ -55,7 +64,7 @@ export default function App() {
             title="Agent Creator crashed"
             onReset={() => setAgentCreatorKey(k => k + 1)}
           >
-            <AgentCreator key={agentCreatorKey} onUpdateVarPool={setVarPool} onUpdateVarSchemas={setVarSchemas} onHandoffToDesigner={handleHandoff} />
+            <AgentCreator key={agentCreatorKey} onUpdateVarPool={setVarPool} onUpdateVarSchemas={setVarSchemas} onHandoffToDesigner={handleHandoff} onSyncFragmentSilently={handleSilentSync} />
           </ErrorBoundary>
         </div>
         <div className={activeTab === 'fragment' ? 'h-full' : 'hidden h-full'}>
