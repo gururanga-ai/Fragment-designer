@@ -435,16 +435,62 @@ export default function ConfigStep({
   )
 }
 
+// Meta-prompt for "Enhance" — asks Glean to research company knowledge (Confluence/Bitbucket/
+// entity schemas — enableCompanyTools/enableWebSearch are already on for this chat route) and
+// turn a rough one-liner into the kind of grounded, specific description the autofill steps
+// actually need (real field/entity names instead of invented ones, concrete layout, etc.).
+function buildEnhancePrompt(desc) {
+  return `Research company knowledge (Confluence, Bitbucket, entity/data schemas, similar existing agents) relevant to building this agent, then rewrite the request below as a detailed, implementation-ready agent description.
+
+Cover, grounded in what you actually find (never invent names you can't confirm):
+- Overall purpose and business context
+- The exact business entities, fields, and SQL/table columns involved
+- UI layout pattern (sidebar, tabs, table, chart, KPI cards, filters)
+- Filter fields needed and their data types
+- Any business logic, calculations, or aggregations involved
+- Data sources / services to pull from
+
+Be specific and concrete — this description is fed directly into config generation, flow action generation, and fragment UI generation, so vague or generic statements are not useful. If you cannot confirm something with high confidence, say what's uncertain rather than inventing it.
+
+Return ONLY the rewritten description as plain text. No JSON, no markdown headers, no preamble like "Here is..." — just the description itself, ready to paste back into an autofill box.
+
+Original request: ${desc}`
+}
+
 function FullAutofillModal({ onClose, onRun }) {
   const [desc, setDesc] = useState('')
   const [status, setStatus] = useState('')
   const [running, setRunning] = useState(false)
   const [deepResearch, setDeepResearch] = useState(false)
+  const [enhancing, setEnhancing] = useState(false)
+  const [enhanced, setEnhanced] = useState(false)
 
   const handleRun = () => {
     if (!desc.trim() || running) return
     setRunning(true)
     onRun(desc.trim(), deepResearch, setStatus, () => { setRunning(false); onClose() })
+  }
+
+  const handleEnhance = async () => {
+    if (!desc.trim() || enhancing || running) return
+    setEnhancing(true)
+    setEnhanced(false)
+    const original = desc.trim()
+    try {
+      let text = ''
+      await gleanChat({
+        conversation: [{ role: 'user', text: buildEnhancePrompt(original) }],
+        useDeepResearch: deepResearch,
+        onPartial: t => { text = t; setDesc(t) },
+      })
+      setDesc(text.trim() || original)
+      setEnhanced(true)
+    } catch (e) {
+      setStatus(`⚠ Enhance failed: ${e.message}`)
+      setDesc(original)
+    } finally {
+      setEnhancing(false)
+    }
   }
 
   return (
@@ -464,15 +510,30 @@ function FullAutofillModal({ onClose, onRun }) {
             {deepResearch ? '🧠 Thinking' : '⚡ Fast'}
           </button>
         </div>
-        <textarea
-          rows={5}
-          autoFocus
-          value={desc}
-          onChange={e => setDesc(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleRun() }}
-          placeholder="e.g. A fulfillment progress agent that shows open orders grouped by carrier, with SQL from the warehouse DB, filters for date range and facility, and a rendered table UI with pagination"
-          className="w-full border border-[#CBD5E1] rounded p-3 text-sm resize-none focus:outline-none focus:border-[#2563EB]"
-        />
+        <div className="relative">
+          <textarea
+            rows={7}
+            autoFocus
+            value={desc}
+            onChange={e => { setDesc(e.target.value); setEnhanced(false) }}
+            onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleRun() }}
+            placeholder="e.g. A fulfillment progress agent that shows open orders grouped by carrier, with SQL from the warehouse DB, filters for date range and facility, and a rendered table UI with pagination"
+            disabled={enhancing}
+            className="w-full border border-[#CBD5E1] rounded p-3 text-sm resize-none focus:outline-none focus:border-[#2563EB] disabled:bg-[#F8FAFC] disabled:text-[#64748B]"
+          />
+          {enhanced && !enhancing && (
+            <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded bg-[#F3E8FF] text-[#6B21A8] font-semibold">
+              ✨ Enhanced
+            </span>
+          )}
+        </div>
+        <button
+          onClick={handleEnhance}
+          disabled={!desc.trim() || enhancing || running}
+          className="w-full text-xs px-3 py-2 bg-[#F3E8FF] text-[#6B21A8] rounded font-semibold hover:bg-[#E9D5FF] disabled:opacity-50 disabled:cursor-not-allowed border border-[#D8B4FE]"
+        >
+          {enhancing ? '🔎 Researching Confluence, Bitbucket, entity knowledge…' : '✨ Enhance Prompt (research company knowledge)'}
+        </button>
         {status && (
           <div className={`rounded px-3 py-2 text-xs font-medium ${status.startsWith('✓') ? 'bg-[#DCFCE7] text-[#166534]' : status.startsWith('⚠') || status.includes('Error') ? 'bg-[#FEE2E2] text-[#991B1B]' : 'bg-[#DBEAFE] text-[#1E3A8A]'}`}>
             {status}
@@ -481,7 +542,7 @@ function FullAutofillModal({ onClose, onRun }) {
         <div className="flex gap-2 items-center">
           <button
             onClick={handleRun}
-            disabled={running || !desc.trim()}
+            disabled={running || enhancing || !desc.trim()}
             className="px-4 py-2 bg-[#166534] text-[#86EFAC] rounded text-sm font-semibold hover:bg-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {running ? '⏳ Running...' : '⚡ Run Autofill'}
