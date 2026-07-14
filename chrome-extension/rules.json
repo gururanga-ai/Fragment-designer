@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        { "header": "Origin", "operation": "set", "value": "https://app.glean.com" },
+        { "header": "Referer", "operation": "set", "value": "https://app.glean.com/" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||manhattan-associates-be.glean.com/api/",
+      "resourceTypes": ["xmlhttprequest"]
+    }
+  }
+]
