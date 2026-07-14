@@ -3,6 +3,7 @@ import ConfigStep from './ConfigStep'
 import FlowBuilder from './FlowBuilder'
 import ExportStep from './ExportStep'
 import ContentsManager from './ContentsManager'
+import ExtensionBanner from '../shared/ExtensionBanner'
 import { buildAgentJson, parseAgentJson } from '../../utils/agentBuilder'
 
 const DEFAULT_CONFIG = {
@@ -289,11 +290,12 @@ export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHa
   return (
     <div className="flex flex-col h-full">
       {pasteModalOpen && (
-        <PasteAgentJsonModal 
-          onImport={applyImportedAgent} 
-          onClose={() => setPasteModalOpen(false)} 
+        <PasteAgentJsonModal
+          onImport={applyImportedAgent}
+          onClose={() => setPasteModalOpen(false)}
         />
       )}
+      <ExtensionBanner />
       {/* Tab bar + actions */}
       <div className="bg-[#F1F5F9] border-b border-[#CBD5E1] px-4 flex items-center gap-1 shrink-0">
         {STEP_LABELS.map((lbl, i) => (

@@ -17,9 +17,12 @@
 // Stable extension ID — deterministic because chrome-extension/manifest.json pins a "key"
 // (see chrome-extension/extension_key.pem, not committed). Without a pinned key, Chrome would
 // assign a random id per unpacked-install location and this constant would need updating per user.
-const EXTENSION_ID = 'ajelmaojeobbcphnnehkkcejpgffbiid'
+export const GLEAN_BRIDGE_EXTENSION_ID = 'ajelmaojeobbcphnnehkkcejpgffbiid'
 
-function hasExtensionBridge() {
+// True only if some extension has this page in its externally_connectable.matches — Chrome only
+// injects chrome.runtime into a page when a matching extension is installed and enabled, so this
+// doubles as a real "is the bridge extension installed" check, not just a capability check.
+export function hasExtensionBridge() {
   return typeof chrome !== 'undefined' && !!chrome.runtime && typeof chrome.runtime.connect === 'function'
 }
 
@@ -30,7 +33,7 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
   return new Promise((resolve, reject) => {
     let port
     try {
-      port = chrome.runtime.connect(EXTENSION_ID, { name: 'glean-relay' })
+      port = chrome.runtime.connect(GLEAN_BRIDGE_EXTENSION_ID, { name: 'glean-relay' })
     } catch (err) {
       reject(err)
       return

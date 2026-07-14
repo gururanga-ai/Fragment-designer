@@ -11,7 +11,7 @@ Streaming responses are forwarded as SSE  (data: {"text": "..."}\n\n).
 """
 
 from __future__ import annotations
-import json, os, time, pathlib
+import io, json, os, time, pathlib, zipfile
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,7 +19,7 @@ import browser_cookie3
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from agent_creator_prompt import GLEAN_SYSTEM_PROMPT
@@ -526,6 +526,32 @@ async def debug_glean_raw():
 async def health():
     cookies = _load_persisted_cookies()
     return {"status": "ok", "cookies_loaded": len(cookies), "cookie_names": list(cookies.keys())}
+
+
+_EXTENSION_DIR = pathlib.Path(__file__).resolve().parent.parent / "chrome-extension"
+# Never ship the private signing key or its derived DER — only manifest.json (which already
+# embeds the public key) is needed for the extension to install with its stable id.
+_EXTENSION_EXCLUDE = {"extension_key.pem", "extension_pub.der", ".gitignore"}
+
+
+@app.get("/api/extension/download")
+async def download_extension():
+    """Zips chrome-extension/ (minus the signing key) for in-app download — lets the web app
+    offer "download the Glean bridge extension" without the user needing repo/VM access."""
+    if not _EXTENSION_DIR.is_dir():
+        raise HTTPException(status_code=404, detail="Extension source not found on this server")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(_EXTENSION_DIR.rglob("*")):
+            if path.is_dir() or path.name in _EXTENSION_EXCLUDE:
+                continue
+            zf.write(path, arcname=f"mawm-glean-bridge/{path.relative_to(_EXTENSION_DIR)}")
+    buf.seek(0)
+    return Response(
+        content=buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=mawm-glean-bridge-extension.zip"},
+    )
 
 
 # Serve the built frontend (npm run build → dist/) when present, so a single process can
