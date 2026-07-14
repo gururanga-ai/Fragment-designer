@@ -78,7 +78,21 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
  * onPartial(text) is called with the growing response as it streams.
  * Returns the final full text.
  */
-export async function gleanChat({ conversation, chatId, agent_context, useDeepResearch, onPartial, signal }) {
+export async function gleanChat({ conversation, chatId, agent_context, useDeepResearch, onPartial, onFallback, signal }) {
+  const proxyCall = async () => {
+    const resp = await fetch('/api/glean/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch }),
+      signal,
+    })
+    if (!resp.ok) {
+      const err = await resp.text()
+      throw new Error(`Glean error ${resp.status}: ${err}`)
+    }
+    return readStream(resp, onPartial)
+  }
+
   if (hasExtensionBridge()) {
     const built = await fetch('/api/glean/chat/build', {
       method: 'POST',
@@ -86,22 +100,21 @@ export async function gleanChat({ conversation, chatId, agent_context, useDeepRe
       body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch }),
       signal,
     }).then(r => r.json())
-    return relayViaExtension(built, onPartial, signal)
+    try {
+      return await relayViaExtension(built, onPartial, signal)
+    } catch (err) {
+      if (signal?.aborted || !/disconnected/i.test(err.message || '')) throw err
+      // The extension's background worker can be evicted mid-request on longer calls (Chrome
+      // enforces a hard lifetime cap on a single background-worker operation that no keepalive
+      // can bypass) — fall back to the shared server proxy for this one call rather than failing
+      // outright. Uses the backend's stored session, not the caller's own — a known, visible
+      // degradation, not silent.
+      onFallback?.()
+      return proxyCall()
+    }
   }
 
-  const resp = await fetch('/api/glean/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch }),
-    signal,
-  })
-
-  if (!resp.ok) {
-    const err = await resp.text()
-    throw new Error(`Glean error ${resp.status}: ${err}`)
-  }
-
-  return readStream(resp, onPartial)
+  return proxyCall()
 }
 
 /**
@@ -109,7 +122,21 @@ export async function gleanChat({ conversation, chatId, agent_context, useDeepRe
  * onPartial(text) is called with the growing response.
  * Returns the final full text.
  */
-export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json, issues, conversation, useDeepResearch, onPartial, signal }) {
+export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json, issues, conversation, useDeepResearch, onPartial, onFallback, signal }) {
+  const proxyCall = async () => {
+    const resp = await fetch('/api/glean/agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
+      signal,
+    })
+    if (!resp.ok) {
+      const err = await resp.text()
+      throw new Error(`Glean error ${resp.status}: ${err}`)
+    }
+    return readStream(resp, onPartial)
+  }
+
   if (hasExtensionBridge()) {
     const built = await fetch('/api/glean/agent/build', {
       method: 'POST',
@@ -117,22 +144,16 @@ export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json,
       body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
       signal,
     }).then(r => r.json())
-    return relayViaExtension(built, onPartial, signal)
+    try {
+      return await relayViaExtension(built, onPartial, signal)
+    } catch (err) {
+      if (signal?.aborted || !/disconnected/i.test(err.message || '')) throw err
+      onFallback?.()
+      return proxyCall()
+    }
   }
 
-  const resp = await fetch('/api/glean/agent', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
-    signal,
-  })
-
-  if (!resp.ok) {
-    const err = await resp.text()
-    throw new Error(`Glean error ${resp.status}: ${err}`)
-  }
-
-  return readStream(resp, onPartial)
+  return proxyCall()
 }
 
 /**

@@ -478,13 +478,16 @@ function FullAutofillModal({ onClose, onRun }) {
     const original = desc.trim()
     try {
       let text = ''
+      let fellBack = false
       await gleanChat({
         conversation: [{ role: 'user', text: buildEnhancePrompt(original) }],
         useDeepResearch: deepResearch,
         onPartial: t => { text = t; setDesc(t) },
+        onFallback: () => { fellBack = true },
       })
       setDesc(text.trim() || original)
       setEnhanced(true)
+      if (fellBack) setStatus('⚠ Extension relay dropped mid-request (long research call) — finished via shared fallback session instead of your own login.')
     } catch (e) {
       setStatus(`⚠ Enhance failed: ${e.message}`)
       setDesc(original)
