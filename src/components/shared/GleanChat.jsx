@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { gleanChat, gleanRunWorkflow, gleanUploadFile } from '../../utils/gleanApi'
 import { extractJson } from '../../utils/agentBuilder'
+import { safeReadClipboardItems, safeReadClipboardText } from '../../utils/clipboard'
 
 /**
  * Shared Glean streaming chat panel.
@@ -78,9 +79,9 @@ export default function GleanChat({
   }, [uploadFile])
 
   const handleClipboardPaste = useCallback(async () => {
-    try {
-      // Try full clipboard read (images + text)
-      const items = await navigator.clipboard.read()
+    // Try full clipboard read (images + text)
+    const items = await safeReadClipboardItems()
+    if (items) {
       for (const item of items) {
         const imgType = item.types.find(t => t.startsWith('image/'))
         if (imgType) {
@@ -99,18 +100,16 @@ export default function GleanChat({
           return
         }
       }
-    } catch {
-      // Fallback: text-only read (widely supported)
-      try {
-        const text = await navigator.clipboard.readText()
-        if (text.trim()) {
-          setInput(prev => prev ? `${prev}\n${text}` : text)
-          setTimeout(() => inputRef.current?.focus(), 0)
-        }
-      } catch {
-        alert('Clipboard read failed. Use Ctrl+V in the text area instead.')
-      }
+      return
     }
+    // Fallback: text-only read (widely supported)
+    const text = await safeReadClipboardText()
+    if (text && text.trim()) {
+      setInput(prev => prev ? `${prev}\n${text}` : text)
+      setTimeout(() => inputRef.current?.focus(), 0)
+      return
+    }
+    alert('Clipboard access unavailable. Use Ctrl+V in the text area instead.')
   }, [uploadFile])
 
   const send = useCallback(async () => {

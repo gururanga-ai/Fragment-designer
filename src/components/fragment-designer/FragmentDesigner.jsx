@@ -7,6 +7,7 @@ import GleanChat from '../shared/GleanChat'
 import AlignFix from './AlignFix'
 import JsonEditor from '../shared/JsonEditor'
 import { makeDefaultElement } from '../../utils/fragmentData'
+import { safeCopyToClipboard, safeReadClipboardText } from '../../utils/clipboard'
 
 const EMPTY_FRAGMENT = {
   Fragment: {
@@ -487,9 +488,10 @@ export default function FragmentDesigner({ varPool, setVarPool, varSchemas = {},
   const exportStr = restoreTemplateVars(JSON.stringify(exportObj, null, 2))
   const actionJsonStr = JSON.stringify(buildActionJson(fragmentName, exportFragmentObj, filterSections, filterPosition), null, 2)
 
-  const handleCopyExport = () => {
+  const handleCopyExport = async () => {
     const str = exportMode === 'action' ? actionJsonStr : exportStr
-    navigator.clipboard.writeText(str).then(() => alert(`${exportMode === 'action' ? 'Action' : 'Fragment'} JSON copied to clipboard.`))
+    const ok = await safeCopyToClipboard(str)
+    alert(ok ? `${exportMode === 'action' ? 'Action' : 'Fragment'} JSON copied to clipboard.` : 'Could not copy automatically — select and copy the JSON manually.')
   }
 
   const handleDownload = () => {
@@ -865,9 +867,9 @@ function PasteJsonModal({ onImport, onClose }) {
 
   // Pre-populate from clipboard on open
   useEffect(() => {
-    navigator.clipboard.readText().then(text => {
+    safeReadClipboardText().then(text => {
       if (text && text.trim().startsWith('{')) setRaw(text)
-    }).catch(() => {})
+    })
   }, [])
 
   const handleLoad = () => {

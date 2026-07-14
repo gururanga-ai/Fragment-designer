@@ -9,6 +9,7 @@ import { CSS } from '@dnd-kit/utilities'
 import GleanChat from '../shared/GleanChat'
 import JsonEditor from '../shared/JsonEditor'
 import Modal from '../shared/Modal'
+import { safeReadClipboardText } from '../../utils/clipboard'
 
 // ── Action info ──────────────────────────────────────────────────────
 const ACTION_INFO = {
@@ -259,7 +260,10 @@ function FragmentModal({ action, onSave, onClose }) {
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold">Fragment JSON:</span>
           <button
-            onClick={() => navigator.clipboard.readText().then(t => setText(t))}
+            onClick={() => safeReadClipboardText().then(t => {
+              if (t == null) { alert('Clipboard access unavailable — paste manually into the box below (Cmd/Ctrl+V).'); return }
+              setText(t)
+            })}
             className="text-xs px-2 py-1 bg-[#DBEAFE] text-[#1E3A8A] rounded"
           >
             Paste from Clipboard

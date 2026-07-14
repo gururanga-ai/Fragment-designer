@@ -42,7 +42,7 @@ function PasteAgentJsonModal({ onImport, onClose }) {
   const [status, setStatus] = useState('')
 
   useEffect(() => {
-    navigator.clipboard.readText().then(text => {
+    navigator.clipboard?.readText?.().then(text => {
       if (text && text.trim().startsWith('{')) setRaw(text)
     }).catch(() => {})
   }, [])

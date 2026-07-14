@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import StackLoginModal from './StackLoginModal'
 import { buildPublishPayload } from '../../utils/agentBuilder'
 import { getStoredStackSession, clearStoredStackSession, stackPublish } from '../../utils/stackApi'
+import { safeCopyToClipboard } from '../../utils/clipboard'
 
 export default function ExportStep({ agentJson, agentId, config, flows, contents }) {
   const [copied, setCopied] = useState(false)
@@ -17,7 +18,8 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
   }, [publishStatus])
 
   const copyJson = async () => {
-    await navigator.clipboard.writeText(jsonStr)
+    const ok = await safeCopyToClipboard(jsonStr)
+    if (!ok) { alert('Could not copy automatically — select and copy the JSON manually.'); return }
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }

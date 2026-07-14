@@ -3,6 +3,7 @@ import Modal from '../shared/Modal'
 import { COMP_COLORS, COMP_ICONS, ELEMENT_LABELS, CHART_TYPES } from '../../utils/fragmentData'
 import { HtmlNodeRenderer, collectSegments } from './FragmentCanvas'
 import { gleanRunWorkflow } from '../../utils/gleanApi'
+import { safeCopyToClipboard } from '../../utils/clipboard'
 
 // ── Python _AF_NEW_NODES node templates ──────────────────────────────────────
 const AF_NEW_NODES = {
@@ -787,9 +788,9 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
     setTimeout(() => setSaved(false), 2000)
   }
 
-  const copyJson = () => {
-    navigator.clipboard.writeText(JSON.stringify({ Fragment: frag }, null, 2))
-      .then(() => alert('Fragment JSON copied.'))
+  const copyJson = async () => {
+    const ok = await safeCopyToClipboard(JSON.stringify({ Fragment: frag }, null, 2))
+    alert(ok ? 'Fragment JSON copied.' : 'Could not copy automatically — select and copy the JSON manually.')
   }
 
   // Slots of the currently selected node (for insert dialog)

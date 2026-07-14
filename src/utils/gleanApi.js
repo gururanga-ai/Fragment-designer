@@ -67,7 +67,7 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
     port.onDisconnect.addListener(() => {
       if (settled) return
       const err = chrome.runtime.lastError
-      finish(reject, new Error(err ? err.message : 'Extension disconnected'))
+      finish(reject, new Error(err ? err.message : 'Extension disconnected mid-request (this can happen on longer Glean lookups like company-knowledge search) — try again'))
     })
     port.postMessage({ type: 'glean_relay', url, params, body })
   })

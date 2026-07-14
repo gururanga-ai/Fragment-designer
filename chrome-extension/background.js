@@ -30,9 +30,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // unchanged. This replaces the old model of pushing the raw cookie value to a shared backend,
 // which meant every user of a shared-hosted web app was making Glean calls under whoever pushed
 // last — this way each user's own browser session is always what gets used, for every call. ──
+// Company-knowledge-search requests (e.g. Enhance Prompt) can run well past Chrome's ~30s
+// background service-worker idle timeout. An open port is *supposed* to keep the worker alive,
+// but this has been unreliable in practice for onConnectExternal ports on some Chrome versions —
+// ticking a real chrome.* API call periodically resets the idle timer as a belt-and-suspenders
+// measure so long-running relays don't get killed mid-stream (which surfaces to the user as an
+// unexplained "Extension disconnected" with no actual error).
+function startKeepAlive() {
+  const id = setInterval(() => { chrome.runtime.getPlatformInfo(() => {}); }, 15000);
+  return () => clearInterval(id);
+}
+
 chrome.runtime.onConnectExternal.addListener((port) => {
   port.onMessage.addListener(async (msg) => {
     if (!msg || msg.type !== "glean_relay") return;
+    const stopKeepAlive = startKeepAlive();
     try {
       const target = new URL(msg.url);
       for (const [k, v] of Object.entries(msg.params || {})) target.searchParams.set(k, v);
@@ -71,6 +83,8 @@ chrome.runtime.onConnectExternal.addListener((port) => {
       port.postMessage({ type: "done" });
     } catch (err) {
       port.postMessage({ type: "error", error: String(err && err.message || err) });
+    } finally {
+      stopKeepAlive();
     }
   });
 });
