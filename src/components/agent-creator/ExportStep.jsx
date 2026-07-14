@@ -68,7 +68,7 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
         <span className="text-xs text-[#94A3B8]">{agentId || 'ext-newAgent'}</span>
         {session && (
           <span className="text-xs text-[#166534] bg-[#F0FDF4] border border-[#BBF7D0] rounded px-2 py-0.5">
-            🔐 {session.stackName} ({session.org}/{session.facilityId})
+            🔐 {session.stackName}.{session.domain || 'sce.manh.com'} ({session.org}/{session.facilityId})
             <button onClick={logout} className="ml-2 text-[#94A3B8] hover:text-red-600">✕</button>
           </span>
         )}

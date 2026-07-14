@@ -204,12 +204,14 @@ class AgentRequest(BaseModel):
 
 class StackTokenRequest(BaseModel):
     stackName: str
+    domain: str = "sce.manh.com"  # e.g. sce.manh.com, cp.manh.cloud, or a custom domain
     username: str
     password: str
 
 
 class StackPublishRequest(BaseModel):
     stackName: str
+    domain: str = "sce.manh.com"
     accessToken: str
     org: str
     facilityId: str
@@ -583,7 +585,8 @@ async def download_extension():
 async def stack_token(req: StackTokenRequest):
     """Password-grant OAuth against a Manhattan Active stack. Returns the access token only —
     never persisted here."""
-    auth_url = f"https://{req.stackName}-auth.sce.manh.com/oauth/token"
+    domain = req.domain.strip().lstrip(".") or "sce.manh.com"
+    auth_url = f"https://{req.stackName}-auth.{domain}/oauth/token"
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(
@@ -611,7 +614,8 @@ async def stack_token(req: StackTokenRequest):
 async def stack_publish(req: StackPublishRequest):
     """Publishes an agent to a Manhattan Active stack via commonui-facade. Caller supplies the
     access token per-request (see /api/stack/token) — nothing is cached here."""
-    save_url = f"https://{req.stackName}.sce.manh.com/commonui-facade/api/commonui-facade/chatbot/agent/save"
+    domain = req.domain.strip().lstrip(".") or "sce.manh.com"
+    save_url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/agent/save"
     headers = {
         "Authorization": f"Bearer {req.accessToken}",
         "SelectedOrganization": req.org,

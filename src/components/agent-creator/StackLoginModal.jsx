@@ -1,12 +1,14 @@
 import { useState } from 'react'
-import { stackLogin, setStoredStackSession } from '../../utils/stackApi'
+import { stackLogin, setStoredStackSession, STACK_DOMAIN_PRESETS } from '../../utils/stackApi'
 
 // Two ways in, matching what the user asked for: retrieve a token via username/password
-// (POST https://<stackName>-auth.sce.manh.com/oauth/token), or paste an already-obtained token
+// (POST https://<stackName>-auth.<domain>/oauth/token), or paste an already-obtained token
 // directly. Either way the result is stored client-side only (see stackApi.js).
 export default function StackLoginModal({ onLogin, onClose }) {
   const [mode, setMode] = useState('credentials') // 'credentials' | 'token'
   const [stackName, setStackName] = useState('')
+  const [domainChoice, setDomainChoice] = useState(STACK_DOMAIN_PRESETS[0].value) // preset value or '__custom__'
+  const [customDomain, setCustomDomain] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [pastedToken, setPastedToken] = useState('')
@@ -16,7 +18,9 @@ export default function StackLoginModal({ onLogin, onClose }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const canSubmit = stackName.trim() && org.trim() && facilityId.trim() &&
+  const domain = (domainChoice === '__custom__' ? customDomain : domainChoice).trim().replace(/^\./, '')
+
+  const canSubmit = stackName.trim() && domain && org.trim() && facilityId.trim() &&
     (mode === 'token' ? pastedToken.trim() : username.trim() && password.trim())
 
   const submit = async () => {
@@ -26,11 +30,12 @@ export default function StackLoginModal({ onLogin, onClose }) {
     try {
       let accessToken = pastedToken.trim()
       if (mode === 'credentials') {
-        const { access_token } = await stackLogin({ stackName: stackName.trim(), username: username.trim(), password })
+        const { access_token } = await stackLogin({ stackName: stackName.trim(), domain, username: username.trim(), password })
         accessToken = access_token
       }
       const session = {
         stackName: stackName.trim(),
+        domain,
         accessToken,
         org: org.trim(),
         facilityId: facilityId.trim(),
@@ -46,6 +51,7 @@ export default function StackLoginModal({ onLogin, onClose }) {
   }
 
   const CI = 'w-full border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-[#2563EB]'
+  const SEL = 'w-full border rounded px-2 py-1.5 text-sm bg-white focus:outline-none focus:border-[#2563EB]'
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -59,9 +65,21 @@ export default function StackLoginModal({ onLogin, onClose }) {
           <div>
             <label className="text-xs font-semibold text-[#374151] block mb-1">Stack Name</label>
             <input value={stackName} onChange={e => setStackName(e.target.value)} className={CI} placeholder="e.g. cotys" />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-[#374151] block mb-1">Domain</label>
+            <select value={domainChoice} onChange={e => setDomainChoice(e.target.value)} className={SEL}>
+              {STACK_DOMAIN_PRESETS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+              <option value="__custom__">Custom domain… (Omni or other)</option>
+            </select>
+            {domainChoice === '__custom__' && (
+              <input value={customDomain} onChange={e => setCustomDomain(e.target.value)} className={`${CI} mt-1.5 font-mono`}
+                placeholder="e.g. omni.manh.com" />
+            )}
             <p className="text-[10px] text-[#94A3B8] mt-1">
-              Used as <code>https://{stackName || '&lt;stack&gt;'}-auth.sce.manh.com/oauth/token</code> for login
-              and <code>https://{stackName || '&lt;stack&gt;'}.sce.manh.com</code> for publish.
+              Used as <code>https://{stackName || '&lt;stack&gt;'}-auth.{domain || '&lt;domain&gt;'}/oauth/token</code> for
+              login and <code>https://{stackName || '&lt;stack&gt;'}.{domain || '&lt;domain&gt;'}</code> for publish.
             </p>
           </div>
 
