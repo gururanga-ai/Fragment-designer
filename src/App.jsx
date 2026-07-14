@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import AgentCreator from './components/agent-creator/AgentCreator'
 import FragmentDesigner from './components/fragment-designer/FragmentDesigner'
+import ErrorBoundary from './components/shared/ErrorBoundary'
 
 const TABS = [
   { id: 'agent', label: '⚙ Agent Creator' },
@@ -12,6 +13,8 @@ export default function App() {
   const [varPool, setVarPool] = useState({})
   const [varSchemas, setVarSchemas] = useState({})
   const [handoffFragment, setHandoffFragment] = useState(null)
+  const [agentCreatorKey, setAgentCreatorKey] = useState(0)
+  const [fragmentDesignerKey, setFragmentDesignerKey] = useState(0)
 
   const handleHandoff = (fragment) => {
     setHandoffFragment(fragment)
@@ -47,16 +50,29 @@ export default function App() {
       {/* Content */}
       <main className="flex-1 min-h-0 relative">
         <div className={activeTab === 'agent' ? 'h-full' : 'hidden h-full'}>
-          <AgentCreator onUpdateVarPool={setVarPool} onUpdateVarSchemas={setVarSchemas} onHandoffToDesigner={handleHandoff} />
+          <ErrorBoundary
+            key={`agent-boundary-${agentCreatorKey}`}
+            title="Agent Creator crashed"
+            onReset={() => setAgentCreatorKey(k => k + 1)}
+          >
+            <AgentCreator key={agentCreatorKey} onUpdateVarPool={setVarPool} onUpdateVarSchemas={setVarSchemas} onHandoffToDesigner={handleHandoff} />
+          </ErrorBoundary>
         </div>
         <div className={activeTab === 'fragment' ? 'h-full' : 'hidden h-full'}>
-          <FragmentDesigner 
-            varPool={varPool} 
-            varSchemas={varSchemas}
-            setVarPool={setVarPool} 
-            handoffFragment={handoffFragment} 
-            onHandoffConsumed={() => setHandoffFragment(null)}
-          />
+          <ErrorBoundary
+            key={`fragment-boundary-${fragmentDesignerKey}`}
+            title="Fragment Designer crashed"
+            onReset={() => setFragmentDesignerKey(k => k + 1)}
+          >
+            <FragmentDesigner
+              key={fragmentDesignerKey}
+              varPool={varPool}
+              varSchemas={varSchemas}
+              setVarPool={setVarPool}
+              handoffFragment={handoffFragment}
+              onHandoffConsumed={() => setHandoffFragment(null)}
+            />
+          </ErrorBoundary>
         </div>
       </main>
     </div>

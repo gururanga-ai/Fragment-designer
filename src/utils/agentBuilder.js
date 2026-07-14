@@ -7,17 +7,19 @@ export function buildAgentJson(config, flows, agentContentsCustom) {
   const seen = new Set()
   const contents = []
 
-  for (const item of agentContentsCustom) {
+  for (const item of (Array.isArray(agentContentsCustom) ? agentContentsCustom : [])) {
+    if (!item || typeof item !== 'object') continue
     const n = item.Name || item.name
     if (n && !seen.has(n)) { contents.push(structuredClone(item)); seen.add(n) }
   }
 
   const flowsOut = {}
-  for (const [flowId, tasks] of Object.entries(flows)) {
+  for (const [flowId, tasks] of Object.entries(flows || {})) {
     const tasksOut = {}
-    for (const [taskId, actions] of Object.entries(tasks)) {
+    for (const [taskId, actions] of Object.entries(tasks || {})) {
       const cleanActions = []
-      for (const action of actions) {
+      for (const action of (Array.isArray(actions) ? actions : [])) {
+        if (!action || typeof action !== 'object') continue
         if (action._disabled) continue
         const frag = action._fragment_json
         if (frag && typeof frag === 'object') {
@@ -89,7 +91,9 @@ export function buildAgentJson(config, flows, agentContentsCustom) {
     includeSubAgentIntents: !!config.includeSubAgentIntents,
     allowSubagentTransition: !!config.allowSubagentTransition,
     requiredParameters: [],
-    agentRootResourceFolders: (config.folders || []).filter(f => f.trim()),
+    agentRootResourceFolders: (Array.isArray(config.folders) ? config.folders : [])
+      .map(f => String(f ?? ''))
+      .filter(f => f.trim()),
     importedFlows: [],
     autoGrantSubAgents: !!config.autoGrantSubAgents,
     autoEnablement: !!config.autoEnablement,
@@ -181,20 +185,27 @@ export function parseAgentJson(data) {
     ),
   }
 
-  const agentContentsCustom = data.agentContentsCustom || data.AgentContentsCustom || []
+  const rawContents = data.agentContentsCustom || data.AgentContentsCustom || []
+  const agentContentsCustom = Array.isArray(rawContents) ? rawContents : []
   const contentsByName = {}
   for (const item of agentContentsCustom) {
+    if (!item || typeof item !== 'object') continue
     const n = item.Name || item.name
     if (n) contentsByName[n] = item
   }
 
   const flows = {}
   for (const [flowId, flowObj] of Object.entries(data.flows || {})) {
+    if (!flowObj || typeof flowObj !== 'object') continue
     flows[flowId] = {}
-    for (const [taskId, taskObj] of Object.entries(flowObj.tasks || {})) {
+    const tasks = flowObj.tasks && typeof flowObj.tasks === 'object' ? flowObj.tasks : {}
+    for (const [taskId, taskObj] of Object.entries(tasks)) {
       const actions = []
-      for (const route of taskObj.routes || []) {
-        for (const action of route.actions || []) {
+      const routes = Array.isArray(taskObj?.routes) ? taskObj.routes : []
+      for (const route of routes) {
+        const routeActions = Array.isArray(route?.actions) ? route.actions : []
+        for (const action of routeActions) {
+          if (!action || typeof action !== 'object') continue
           const a = { ...action }
           if (a.type === 'renderUI' && a.inputJSON && contentsByName[a.inputJSON]) {
             a._fragment_json = contentsByName[a.inputJSON]
