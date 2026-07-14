@@ -78,12 +78,12 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
  * onPartial(text) is called with the growing response as it streams.
  * Returns the final full text.
  */
-export async function gleanChat({ conversation, chatId, agent_context, onPartial, signal }) {
+export async function gleanChat({ conversation, chatId, agent_context, useDeepResearch, onPartial, signal }) {
   if (hasExtensionBridge()) {
     const built = await fetch('/api/glean/chat/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null }),
+      body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch }),
       signal,
     }).then(r => r.json())
     return relayViaExtension(built, onPartial, signal)
@@ -92,7 +92,7 @@ export async function gleanChat({ conversation, chatId, agent_context, onPartial
   const resp = await fetch('/api/glean/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null }),
+    body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch }),
     signal,
   })
 
@@ -109,12 +109,12 @@ export async function gleanChat({ conversation, chatId, agent_context, onPartial
  * onPartial(text) is called with the growing response.
  * Returns the final full text.
  */
-export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json, issues, conversation, onPartial, signal }) {
+export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json, issues, conversation, useDeepResearch, onPartial, signal }) {
   if (hasExtensionBridge()) {
     const built = await fetch('/api/glean/agent/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [] }),
+      body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
       signal,
     }).then(r => r.json())
     return relayViaExtension(built, onPartial, signal)
@@ -123,7 +123,7 @@ export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json,
   const resp = await fetch('/api/glean/agent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [] }),
+    body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
     signal,
   })
 

@@ -397,6 +397,7 @@ function AlignGlean({ frag, selPath, selNode, onApply }) {
   // GleanChat/Agent Creator chat) so follow-ups like "no, the other one" have something to refer
   // to. Without this each send() was a fresh, context-free call with zero memory of earlier turns.
   const [history, setHistory] = useState([])
+  const [deepResearch, setDeepResearch] = useState(false)
   const abortRef = useRef(null)
   const responseRef = useRef('')
   const bottomRef = useRef(null)
@@ -435,6 +436,7 @@ Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the use
         fragment_json: frag,
         issues: [],
         conversation: priorTurns,
+        useDeepResearch: deepResearch,
         onPartial: (t) => { responseRef.current = t; setStreaming(t) },
         signal: ctrl.signal,
       })
@@ -470,6 +472,15 @@ Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the use
       {/* header */}
       <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1E3A8A]">
         <span className="text-[#93C5FD] text-xs font-bold tracking-wide">✨ Glean AI Fix</span>
+        <button
+          onClick={() => setDeepResearch(d => !d)}
+          title={deepResearch ? 'Thinking mode — slower, more thorough' : 'Fast mode — quick response'}
+          className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-colors ${
+            deepResearch ? 'bg-[#4C1D95] text-[#DDD6FE] border-[#7C3AED]' : 'bg-transparent text-[#93C5FD] border-[#3B5998] hover:border-[#93C5FD]'
+          }`}
+        >
+          {deepResearch ? '🧠 Thinking' : '⚡ Fast'}
+        </button>
         {lastApply && (
           <span className="ml-auto text-[10px] bg-green-600 text-white rounded px-1.5 py-0.5 font-semibold">
             {lastApply.mode === 'replace' ? '🔄 Fragment replaced' : `✓ ${lastApply.count} fix${lastApply.count !== 1 ? 'es' : ''} applied`}

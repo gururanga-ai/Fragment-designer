@@ -31,6 +31,9 @@ export default function GleanChat({
   const [cookieOpen, setCookieOpen] = useState(false)
   const [cookieSaved, setCookieSaved] = useState(false)
   const [thinkingExpanded, setThinkingExpanded] = useState(false)
+  // Fast (default) vs Thinking mode — maps to Glean's own useDeepResearch flag (confirmed via
+  // HAR capture of the real glean.com UI). Thinking = slower, more thorough; Fast = quick.
+  const [deepResearch, setDeepResearch] = useState(false)
   // Attachments: [{name, fileId, preview}] — preview is dataURL for images
   const [attachments, setAttachments] = useState([])
   const [uploading, setUploading] = useState(false)
@@ -135,8 +138,8 @@ export default function GleanChat({
       const uploadedFileIds = att.map(a => a.fileId).filter(Boolean)
       const isNonEmptyFrag = fragmentJson && typeof fragmentJson === 'object' && Object.keys(fragmentJson).length > 0
       const args = mode === 'agent'
-        ? { prompt, uploadedFileIds, fragment_json: isNonEmptyFrag ? fragmentJson : {}, issues: [], conversation: history.map(m => ({ role: m.role, text: m.text })), onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
-        : { conversation: newHistory, chatId, agent_context: currentFlow || null, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
+        ? { prompt, uploadedFileIds, fragment_json: isNonEmptyFrag ? fragmentJson : {}, issues: [], conversation: history.map(m => ({ role: m.role, text: m.text })), useDeepResearch: deepResearch, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
+        : { conversation: newHistory, chatId, agent_context: currentFlow || null, useDeepResearch: deepResearch, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
 
       await fn(args)
       setPartialText('')
@@ -155,7 +158,7 @@ export default function GleanChat({
     } finally {
       setStreaming(false)
     }
-  }, [input, attachments, streaming, history, chatId, mode, onHistoryChange, buildPrompt, fragmentJson, currentFlow])
+  }, [input, attachments, streaming, history, chatId, mode, onHistoryChange, buildPrompt, fragmentJson, currentFlow, deepResearch])
 
   const stop = () => { abortRef.current?.abort(); setStreaming(false); setPartialText('') }
 
@@ -378,6 +381,17 @@ export default function GleanChat({
         <span className="text-[#94A3B8] text-xs ml-2 flex-1 truncate">{title}</span>
         {fragmentJson && <span className="text-[#34D399] text-[10px] mr-2">📎 fragment</span>}
         {cookieSaved && <span className="text-[#34D399] text-xs mr-2">Cookie saved</span>}
+        <button
+          onClick={() => setDeepResearch(d => !d)}
+          title={deepResearch ? 'Thinking mode — slower, more thorough (Glean useDeepResearch)' : 'Fast mode — quick response'}
+          className={`text-[10px] px-2 py-0.5 rounded-full mr-2 font-medium border transition-colors ${
+            deepResearch
+              ? 'bg-[#4C1D95] text-[#DDD6FE] border-[#7C3AED]'
+              : 'bg-transparent text-[#94A3B8] border-[#334155] hover:border-[#60A5FA] hover:text-[#60A5FA]'
+          }`}
+        >
+          {deepResearch ? '🧠 Thinking' : '⚡ Fast'}
+        </button>
         <button onClick={() => setCookieOpen(o => !o)} title="Set Glean session cookie manually" className="text-[#94A3B8] hover:text-[#60A5FA] text-xs mr-2">🍪</button>
         <button onClick={clearChat} className="text-[#94A3B8] hover:text-white text-xs">Clear</button>
       </div>

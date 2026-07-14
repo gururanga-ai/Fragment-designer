@@ -150,7 +150,7 @@ export default function ConfigStep({
     }
   }
 
-  const runFullAutofill = async (desc, setStatus, onDone) => {
+  const runFullAutofill = async (desc, deepResearch, setStatus, onDone) => {
     // New autofill = new Glean context
     onGleanChatIdChange(null)
     onGleanHistoryChange([])
@@ -163,7 +163,7 @@ export default function ConfigStep({
     try {
       const configPrompt = `Autofill this agent — configure agent properties for: ${desc}`
       let configText = ''
-      await gleanChat({ conversation: [{ role: 'user', text: configPrompt }], onPartial: t => { configText = t } })
+      await gleanChat({ conversation: [{ role: 'user', text: configPrompt }], useDeepResearch: deepResearch, onPartial: t => { configText = t } })
       const configData = extractJson(configText)
       if (configData && !Array.isArray(configData)) {
         applyGleanConfig(configData)
@@ -181,7 +181,7 @@ export default function ConfigStep({
     try {
       const flowPrompt = `Build flow — generate actions for the default task: ${desc}`
       let flowText = ''
-      await gleanChat({ conversation: [{ role: 'user', text: flowPrompt }], onPartial: t => { flowText = t } })
+      await gleanChat({ conversation: [{ role: 'user', text: flowPrompt }], useDeepResearch: deepResearch, onPartial: t => { flowText = t } })
       flowData = extractJson(flowText)
       if (Array.isArray(flowData) && flowData.length > 0) {
         onFlowsChange(prev => {
@@ -209,7 +209,7 @@ export default function ConfigStep({
       try {
         const fragPrompt = `Create fragment UI — suggest a fragment layout for this agent: ${desc}`
         let fragText = ''
-        await gleanChat({ conversation: [{ role: 'user', text: fragPrompt }], onPartial: t => { fragText = t } })
+        await gleanChat({ conversation: [{ role: 'user', text: fragPrompt }], useDeepResearch: deepResearch, onPartial: t => { fragText = t } })
         const fragData = extractJson(fragText)
         if (fragData?.mode === 'fragment_handoff') {
           const rawId = (config.agentId || '').replace(/^ext-/, '') || (config.agentName || '').replace(/\s+/g, '') || 'agent'
@@ -428,7 +428,7 @@ export default function ConfigStep({
       {autofillOpen && (
         <FullAutofillModal
           onClose={() => { setAutofillOpen(false); setAutofillStatus('') }}
-          onRun={(desc, setStatus, onDone) => runFullAutofill(desc, setStatus, onDone)}
+          onRun={(desc, deepResearch, setStatus, onDone) => runFullAutofill(desc, deepResearch, setStatus, onDone)}
         />
       )}
     </div>
@@ -439,19 +439,31 @@ function FullAutofillModal({ onClose, onRun }) {
   const [desc, setDesc] = useState('')
   const [status, setStatus] = useState('')
   const [running, setRunning] = useState(false)
+  const [deepResearch, setDeepResearch] = useState(false)
 
   const handleRun = () => {
     if (!desc.trim() || running) return
     setRunning(true)
-    onRun(desc.trim(), setStatus, () => { setRunning(false); onClose() })
+    onRun(desc.trim(), deepResearch, setStatus, () => { setRunning(false); onClose() })
   }
 
   return (
     <Modal title="⚡ Full Autofill — Config + Flow" onClose={onClose} width="max-w-lg">
       <div className="p-4 space-y-3">
-        <p className="text-sm text-[#374151]">
-          Describe the agent in plain English. Glean will automatically fill the configuration form and generate flow actions — no manual steps required.
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm text-[#374151] flex-1">
+            Describe the agent in plain English. Glean will automatically fill the configuration form and generate flow actions — no manual steps required.
+          </p>
+          <button
+            onClick={() => setDeepResearch(d => !d)}
+            title={deepResearch ? 'Thinking mode — slower, more thorough' : 'Fast mode — quick response'}
+            className={`shrink-0 text-[10px] px-2 py-1 rounded-full font-medium border transition-colors ${
+              deepResearch ? 'bg-[#4C1D95] text-white border-[#4C1D95]' : 'bg-white text-[#64748B] border-[#CBD5E1] hover:border-[#94A3B8]'
+            }`}
+          >
+            {deepResearch ? '🧠 Thinking' : '⚡ Fast'}
+          </button>
+        </div>
         <textarea
           rows={5}
           autoFocus

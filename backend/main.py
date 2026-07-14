@@ -193,6 +193,7 @@ class ChatRequest(BaseModel):
     conversation: list[ChatMessage]
     chatId: str | None = None
     agent_context: dict | None = None
+    useDeepResearch: bool = False
 
 class AgentRequest(BaseModel):
     prompt: str
@@ -200,6 +201,7 @@ class AgentRequest(BaseModel):
     fragment_json: dict = Field(default_factory=dict)
     issues: list = Field(default_factory=list)
     conversation: list[ChatMessage] = Field(default_factory=list)
+    useDeepResearch: bool = False
 
 
 class StackTokenRequest(BaseModel):
@@ -288,6 +290,9 @@ def _build_chat_body(req: ChatRequest) -> dict[str, Any]:
                 "artifacts": {"allowedArtifactTypes": ["PAPER", "HTML_CODE"]},
                 "canRenderImages": False,
             },
+            # "Thinking" mode toggle — matches the real glean.com UI's own deep-research flag
+            # (confirmed via HAR capture: every real request carries this field, default false).
+            "useDeepResearch": req.useDeepResearch,
         },
         "background": False,
         "clientTools": [],
@@ -399,6 +404,7 @@ def _build_agent_body(req: AgentRequest) -> dict[str, Any]:
             "toolSets": {"enableCompanyTools": False, "enableWebSearch": False},
             "useCanvas": False,
             "useImageGeneration": False,
+            "useDeepResearch": req.useDeepResearch,
             "clientCapabilities": {
                 "artifacts": {"allowedArtifactTypes": ["PAPER", "HTML_CODE"]},
                 "canRenderImages": False,
