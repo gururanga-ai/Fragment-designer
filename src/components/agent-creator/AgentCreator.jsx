@@ -261,7 +261,7 @@ export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHa
       const contentsMsg = ac.length > 0
         ? `\n\n${ac.length} content item(s) loaded into Contents library:\n${ac.map(i => `  • ${i.Name || i.name || '?'}`).join('\n')}\n\nClick the "Contents" button to view/edit them.`
         : ''
-      alert(`Agent '${data.agentId || '?'}' loaded. Review properties and proceed to Build Flow.${contentsMsg}`)
+      alert(`Agent '${c.agentId || '?'}' loaded. Review properties and proceed to Build Flow.${contentsMsg}`)
     } catch (err) {
       alert(`Import error: ${err.message}`)
     }

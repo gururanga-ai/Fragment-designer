@@ -139,8 +139,23 @@ export function buildPublishPayload(config, flows, agentContentsCustom) {
 
 /**
  * Loads an imported agent JSON into config/flows/contents state.
+ * Accepts either shape: our own flat lowercase export (buildAgentJson's output — agentId,
+ * agentName, flows, agentContentsCustom, all top-level) OR the "publish to stack" shape
+ * (buildPublishPayload's output — PascalCase AgentId/Description/etc, with the real flat
+ * definition nested as a JSON string in "Content", and contents in a separate top-level
+ * "AgentContentsCustom" array). The second shape is exactly what round-trips back from a
+ * stack, so pasting it back in must work the same as pasting our own export.
  */
 export function parseAgentJson(data) {
+  if (typeof data.Content === 'string' && data.AgentId) {
+    try {
+      const inner = JSON.parse(data.Content)
+      if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+        data = { ...inner, agentContentsCustom: inner.agentContentsCustom || data.AgentContentsCustom }
+      }
+    } catch { /* Content wasn't actually nested JSON — fall through and parse data as-is */ }
+  }
+
   const config = {
     agentId: data.agentId || '',
     agentName: data.agentName || '',
