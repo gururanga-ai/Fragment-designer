@@ -1,38 +1,26 @@
 const STATUS_LABELS = {
-  ok:              ["ok",    "Cookie active — Glean connected"],
-  no_cookie:       ["warn",  "Not logged in to Glean"],
-  cookie_removed:  ["warn",  "Cookie was removed — log in again"],
-  backend_offline: ["error", "Backend offline (start ./start.sh)"],
-  backend_error:   ["error", "Backend returned an error"],
+  ok:        ["ok",   "Logged in to Glean — ready"],
+  no_cookie: ["warn", "Not logged in to Glean (log in at app.glean.com)"],
 };
 
-function render(status, lastPush) {
+function render(status, lastSeen) {
   const [cls, label] = STATUS_LABELS[status] || ["warn", status || "Unknown"];
   document.getElementById("dot").className = `dot ${cls}`;
   document.getElementById("status-text").className = `value ${cls}`;
   document.getElementById("status-text").textContent = label;
-  document.getElementById("last-push").textContent = lastPush || "—";
+  document.getElementById("last-seen").textContent = lastSeen || "—";
 }
 
-// Load stored state
-chrome.storage.local.get(["status", "lastPush", "cookieNames"], ({ status, lastPush, cookieNames }) => {
-  render(status, lastPush);
-  if (cookieNames && cookieNames.length) {
-    const el = document.createElement("div");
-    el.className = "card";
-    el.innerHTML = `<div class="label">Cookies sent</div><div class="value" style="font-size:10px;word-break:break-all">${cookieNames.join(", ")}</div>`;
-    document.querySelector("#push-btn").before(el);
-  }
-});
+function loadAndRender() {
+  chrome.storage.local.get(["status", "lastSeen"], ({ status, lastSeen }) => {
+    render(status, lastSeen);
+  });
+}
 
-// Push now button — sends message to background worker
-document.getElementById("push-btn").addEventListener("click", async () => {
-  document.getElementById("status-text").textContent = "Pushing…";
-  // Trigger background to push, then re-read state
-  await chrome.runtime.sendMessage({ type: "push_now" });
-  setTimeout(() => {
-    chrome.storage.local.get(["status", "lastPush"], ({ status, lastPush }) => {
-      render(status, lastPush);
-    });
-  }, 800);
+loadAndRender();
+
+document.getElementById("refresh-btn").addEventListener("click", async () => {
+  document.getElementById("status-text").textContent = "Checking…";
+  await chrome.runtime.sendMessage({ type: "refresh_status" }).catch(() => {});
+  setTimeout(loadAndRender, 400);
 });

@@ -1,14 +1,24 @@
 {
   "manifest_version": 3,
   "name": "MAWM Glean Session Bridge",
-  "version": "1.0.0",
-  "description": "Automatically forwards the Glean session cookie to the local MAWM Agent Tools backend.",
+  "version": "2.0.0",
+  "description": "Bridges the MAWM Fragment Designer / Agent Creator web app to Glean using your own authenticated browser session. Your cookie value never leaves your browser — the extension calls Glean directly and relays the result.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtvUGnMqoj1BzEOkPKEoYFtAH4qgrS0V5wlaS85iVl6NqX0WB9bAcjWsGidFZGeYYdc9c3dpMyhSXWx8mXUQUCPRfvpp344XHi1RYoud4K7jyYqc1wdqhNpNzddrkGdjHF4cULMFzSvn2GkhAKL8WV/f2BKuNH9wZaOjtYqO52tbb3Du4jz+gHaZd5A+t2rQD0YOFNa+ZVWpWtOf4w1t2JRx+4Jnm47BU2Atd+0MhBgyysa6JARENZ1sMuU8SeI5CZUetxk9/Bvpbj2ZpV1BaJNH0W78nG281x2Le0wiAPESw/wcbuY1mC3xuvyv+J/0dfoBJ8LQlkcyciiTvOsAo1wIDAQAB",
 
-  "permissions": ["cookies", "storage"],
+  "permissions": ["cookies"],
   "host_permissions": [
-    "*://*.glean.com/*",
-    "http://localhost:8000/*"
+    "*://*.glean.com/*"
   ],
+
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:8000/*",
+      "http://localhost:5173/*",
+      "http://localhost:5174/*",
+      "http://10.50.78.184:8000/*",
+      "http://alvb-mausrhel7001:8000/*"
+    ]
+  },
 
   "background": {
     "service_worker": "background.js"

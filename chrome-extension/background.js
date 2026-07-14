@@ -1,56 +1,76 @@
-const BACKEND_URL = "http://localhost:8000/api/glean/set-cookie";
-const GLEAN_URL   = "https://manhattan-associates-be.glean.com";
+const GLEAN_URL = "https://manhattan-associates-be.glean.com";
 
-async function pushCookies() {
-  try {
-    // Get ALL cookies for the Glean domain
-    const allCookies = await chrome.cookies.getAll({ url: GLEAN_URL });
-
-    if (!allCookies || allCookies.length === 0) {
-      await chrome.storage.local.set({ status: "no_cookie", lastPush: null });
-      return;
-    }
-
-    // Build name→value dict
-    const cookieDict = {};
-    for (const ck of allCookies) {
-      cookieDict[ck.name] = ck.value;
-    }
-
-    const resp = await fetch(BACKEND_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cookies: cookieDict }),
-    });
-
-    if (resp.ok) {
-      const now = new Date().toLocaleTimeString();
-      const count = allCookies.length;
-      await chrome.storage.local.set({
-        status: "ok",
-        lastPush: `${now} (${count} cookies)`,
-        cookieNames: Object.keys(cookieDict),
-      });
-      console.log(`[MAWM Bridge] Pushed ${count} cookies at ${now}`);
-    } else {
-      await chrome.storage.local.set({ status: "backend_error", lastPush: null });
-    }
-  } catch (err) {
-    await chrome.storage.local.set({ status: "backend_offline", lastPush: null });
-  }
+// ── Login status (for the popup) — reads a cookie's presence, never its value ──────────────
+async function refreshStatus() {
+  const cookies = await chrome.cookies.getAll({ url: GLEAN_URL, name: "glean-session-store" });
+  await chrome.storage.local.set({
+    status: cookies.length ? "ok" : "no_cookie",
+    lastSeen: new Date().toLocaleTimeString(),
+  });
 }
-
-chrome.runtime.onInstalled.addListener(pushCookies);
-chrome.runtime.onStartup.addListener(pushCookies);
-
-// Re-push whenever any Glean cookie changes
+chrome.runtime.onInstalled.addListener(refreshStatus);
+chrome.runtime.onStartup.addListener(refreshStatus);
 chrome.cookies.onChanged.addListener(({ cookie }) => {
-  if (cookie.domain.includes("glean.com")) {
-    pushCookies();
+  if (cookie.domain.includes("glean.com")) refreshStatus();
+});
+
+// Manual refresh from the popup (internal message, not external)
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === "refresh_status") {
+    refreshStatus().then(() => sendResponse({ ok: true }));
+    return true; // keep the message channel open for the async response
   }
 });
 
-// Manual push from popup
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "push_now") pushCookies();
+// ── Relay: web app connects, sends { type:'glean_relay', url, body, params }. We fetch Glean
+// directly from this background context using the browser's own ambient session
+// (credentials:'include' — the cookie value itself is never read, serialized, or transmitted
+// anywhere by this extension) and stream the response back over the port line-by-line, mirroring
+// Glean's own newline-delimited JSON stream so the web app's existing parsing logic works
+// unchanged. This replaces the old model of pushing the raw cookie value to a shared backend,
+// which meant every user of a shared-hosted web app was making Glean calls under whoever pushed
+// last — this way each user's own browser session is always what gets used, for every call. ──
+chrome.runtime.onConnectExternal.addListener((port) => {
+  port.onMessage.addListener(async (msg) => {
+    if (!msg || msg.type !== "glean_relay") return;
+    try {
+      const target = new URL(msg.url);
+      for (const [k, v] of Object.entries(msg.params || {})) target.searchParams.set(k, v);
+
+      const resp = await fetch(target.toString(), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify(msg.body),
+      });
+
+      if (resp.status === 401) {
+        port.postMessage({ type: "error", error: "Glean 401 — not logged in to Glean in this browser" });
+        return;
+      }
+      if (!resp.ok || !resp.body) {
+        const text = await resp.text().catch(() => "");
+        port.postMessage({ type: "error", error: `Glean HTTP ${resp.status}: ${text.slice(0, 200)}` });
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (line) port.postMessage({ type: "line", line });
+        }
+      }
+      port.postMessage({ type: "done" });
+    } catch (err) {
+      port.postMessage({ type: "error", error: String(err && err.message || err) });
+    }
+  });
 });

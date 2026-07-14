@@ -393,6 +393,10 @@ function AlignGlean({ frag, selPath, selNode, onApply }) {
   const [streaming, setStreaming] = useState('')
   const [status, setStatus] = useState('') // 'loading' | 'done' | 'error' | ''
   const [lastApply, setLastApply] = useState(null) // { count, mode }
+  // Prior turns in this Align Fix session — replayed on every call (same pattern as the main
+  // GleanChat/Agent Creator chat) so follow-ups like "no, the other one" have something to refer
+  // to. Without this each send() was a fresh, context-free call with zero memory of earlier turns.
+  const [history, setHistory] = useState([])
   const abortRef = useRef(null)
   const responseRef = useRef('')
   const bottomRef = useRef(null)
@@ -423,14 +427,19 @@ Currently selected node:
   config: ${nodeConfig}
 
 Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the user request. Return suggestions or full Fragment per mode rules.`
+    const priorTurns = history
+    setHistory(h => [...h, { role: 'user', text: promptText.trim() }])
     try {
       await gleanRunWorkflow({
         prompt: fullPrompt,
         fragment_json: frag,
         issues: [],
+        conversation: priorTurns,
         onPartial: (t) => { responseRef.current = t; setStreaming(t) },
         signal: ctrl.signal,
       })
+      setHistory(h => [...h, { role: 'ai', text: responseRef.current }])
+      setStreaming('')
       const parsed = extractJson(responseRef.current)
       if (parsed) {
         const result = applyGleanFixes(frag, parsed)
@@ -468,6 +477,9 @@ Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the use
         )}
         {status === 'loading' && <span className="ml-auto text-[10px] text-[#93C5FD] animate-pulse">Glean thinking…</span>}
         {status === 'error' && <span className="ml-auto text-[10px] text-red-300">Error — try again</span>}
+        {history.length > 0 && (
+          <button onClick={() => setHistory([])} className="ml-auto text-[10px] text-[#93C5FD] hover:text-white">Clear history</button>
+        )}
       </div>
 
       {/* quick chips */}
@@ -480,10 +492,20 @@ Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the use
         ))}
       </div>
 
-      {/* streaming response */}
-      {streaming && (
-        <div className="mx-2 mt-1.5 rounded bg-white border border-[#E2E8F0] text-[10px] font-mono text-[#374151] px-2 py-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap">
-          {streaming}
+      {/* conversation history — replayed to Glean on every send() so it has memory of prior turns */}
+      {(history.length > 0 || streaming) && (
+        <div className="mx-2 mt-1.5 rounded bg-white border border-[#E2E8F0] text-[10px] font-mono text-[#374151] px-2 py-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap space-y-1.5">
+          {history.map((m, i) => (
+            <div key={i}>
+              <span className={`font-bold ${m.role === 'user' ? 'text-[#1E3A8A]' : 'text-[#7C3AED]'}`}>{m.role === 'user' ? 'You: ' : 'Glean: '}</span>
+              {m.text}
+            </div>
+          ))}
+          {streaming && (
+            <div>
+              <span className="font-bold text-[#7C3AED]">Glean: </span>{streaming}
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       )}

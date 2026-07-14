@@ -135,7 +135,7 @@ export default function GleanChat({
       const uploadedFileIds = att.map(a => a.fileId).filter(Boolean)
       const isNonEmptyFrag = fragmentJson && typeof fragmentJson === 'object' && Object.keys(fragmentJson).length > 0
       const args = mode === 'agent'
-        ? { prompt, uploadedFileIds, fragment_json: isNonEmptyFrag ? fragmentJson : {}, issues: [], onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
+        ? { prompt, uploadedFileIds, fragment_json: isNonEmptyFrag ? fragmentJson : {}, issues: [], conversation: history.map(m => ({ role: m.role, text: m.text })), onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
         : { conversation: newHistory, chatId, agent_context: currentFlow || null, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
 
       await fn(args)

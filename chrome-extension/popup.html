@@ -40,6 +40,7 @@
     .value.ok    { color: #34D399; }
     .value.error { color: #F87171; }
     .value.warn  { color: #FBBF24; }
+    .note { font-size: 10px; color: #64748B; line-height: 1.5; margin-top: 8px; }
     button {
       width: 100%;
       padding: 8px;
@@ -60,7 +61,7 @@
     <div class="dot" id="dot"></div>
     <div>
       <h2>MAWM Glean Bridge</h2>
-      <div class="sub">Session cookie → localhost:8000</div>
+      <div class="sub">Calls Glean using your own session</div>
     </div>
   </div>
 
@@ -70,11 +71,17 @@
   </div>
 
   <div class="card">
-    <div class="label">Last pushed</div>
-    <div class="value" id="last-push">—</div>
+    <div class="label">Last checked</div>
+    <div class="value" id="last-seen">—</div>
   </div>
 
-  <button id="push-btn">Push Cookie Now</button>
+  <button id="refresh-btn">Refresh Status</button>
+
+  <p class="note">
+    Your Glean cookie value never leaves this browser. When the Fragment Designer / Agent
+    Creator web app needs Glean, this extension makes the call directly using your existing
+    Glean login and relays the result back — nothing is pushed to any backend.
+  </p>
 
   <script src="popup.js"></script>
 </body>

@@ -20,6 +20,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from agent_creator_prompt import GLEAN_SYSTEM_PROMPT
 from fragment_designer_prompt import ALIGN_FIX_SYSTEM
@@ -194,16 +195,15 @@ class AgentRequest(BaseModel):
     uploadedFileIds: list[str] = Field(default_factory=list)
     fragment_json: dict = Field(default_factory=dict)
     issues: list = Field(default_factory=list)
+    conversation: list[ChatMessage] = Field(default_factory=list)
 
 
 # ── Routes ────────────────────────────────────────────────────────────
 
-@app.post("/api/glean/chat")
-async def proxy_chat(req: ChatRequest):
-    """Proxy to Glean /chat (generic, used by Agent Creator)."""
-    cookies = _get_glean_cookies()
+def _build_chat_body(req: ChatRequest) -> dict[str, Any]:
+    """Pure request-body construction for Glean /chat (Agent Creator) — no cookies, no network call.
+    Shared by the server-side proxy route and the extension-relay "build" route."""
     now = _now_iso()
-
     messages = []
     if not req.chatId:
         messages.append({
@@ -288,7 +288,16 @@ async def proxy_chat(req: ChatRequest):
     }
     if req.chatId:
         body["chatId"] = req.chatId
+    return body
 
+
+@app.post("/api/glean/chat")
+async def proxy_chat(req: ChatRequest):
+    """Proxy to Glean /chat (generic, used by Agent Creator). Uses the shared backend cookie —
+    prefer the extension relay (/api/glean/chat/build + browser-side fetch) when available,
+    since that uses each user's own session instead of one shared server-side cookie."""
+    cookies = _get_glean_cookies()
+    body = _build_chat_body(req)
     return StreamingResponse(
         _stream_glean(f"{GLEAN_BASE}/chat", body, cookies),
         media_type="text/event-stream",
@@ -296,12 +305,22 @@ async def proxy_chat(req: ChatRequest):
     )
 
 
-@app.post("/api/glean/agent")
-async def proxy_agent(req: AgentRequest):
-    """Proxy to Glean /chat using ALIGN_FIX_SYSTEM (Fragment Designer AI)."""
-    cookies = _get_glean_cookies()
-    now = _now_iso()
+@app.post("/api/glean/chat/build")
+async def build_chat_request(req: ChatRequest):
+    """Pure request-body builder for the extension relay — no cookies needed, no network call.
+    The browser extension fetches Glean directly with this using the user's own ambient session."""
+    return {
+        "url": f"{GLEAN_BASE}/chat",
+        "params": {"timezoneOffset": "240", **GLEAN_API_PARAMS},
+        "body": _build_chat_body(req),
+    }
 
+
+def _build_agent_body(req: AgentRequest) -> dict[str, Any]:
+    """Pure request-body construction for Glean /chat using ALIGN_FIX_SYSTEM (Fragment Designer) —
+    no cookies, no network call. Shared by the server-side proxy route and the extension-relay
+    "build" route."""
+    now = _now_iso()
     payload_obj = {
         "user_prompt": req.prompt,
         "fragment_json": req.fragment_json,
@@ -326,14 +345,28 @@ async def proxy_agent(req: AgentRequest):
             "messageType": "CONTENT",
             "ts": now,
         },
-        {
+    ]
+    # Replay prior turns so Glean actually has conversation memory — matches the pattern
+    # /api/glean/chat (Agent Creator) already uses. Without this every message was a fresh,
+    # context-free call: follow-ups like "again give" or "no, fix the other one" had nothing
+    # to refer back to, so the AI would ignore/misread what the user actually meant.
+    for msg in req.conversation:
+        if msg.role != "user":
+            continue
+        messages.append({
             "agentConfig": {"agent": "FAST"},
             "author": "USER",
-            "fragments": [{"text": json.dumps(payload_obj, indent=2)}],
+            "fragments": [{"text": msg.text}],
             "messageType": "CONTENT",
             "ts": now,
-        },
-    ]
+        })
+    messages.append({
+        "agentConfig": {"agent": "FAST"},
+        "author": "USER",
+        "fragments": [{"text": json.dumps(payload_obj, indent=2)}],
+        "messageType": "CONTENT",
+        "ts": now,
+    })
 
     body: dict[str, Any] = {
         "agentConfig": {
@@ -368,12 +401,31 @@ async def proxy_agent(req: AgentRequest):
             "firstEngageTsSec": int(time.time()),
         },
     }
+    return body
 
+
+@app.post("/api/glean/agent")
+async def proxy_agent(req: AgentRequest):
+    """Proxy to Glean /chat using ALIGN_FIX_SYSTEM (Fragment Designer AI). Uses the shared backend
+    cookie — prefer the extension relay (/api/glean/agent/build + browser-side fetch) when
+    available, since that uses each user's own session instead of one shared server-side cookie."""
+    cookies = _get_glean_cookies()
+    body = _build_agent_body(req)
     return StreamingResponse(
         _stream_glean(f"{GLEAN_BASE}/chat", body, cookies),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/glean/agent/build")
+async def build_agent_request(req: AgentRequest):
+    """Pure request-body builder for the extension relay — no cookies needed, no network call."""
+    return {
+        "url": f"{GLEAN_BASE}/chat",
+        "params": {"timezoneOffset": "240", **GLEAN_API_PARAMS},
+        "body": _build_agent_body(req),
+    }
 
 
 @app.post("/api/glean/upload")
@@ -474,6 +526,14 @@ async def debug_glean_raw():
 async def health():
     cookies = _load_persisted_cookies()
     return {"status": "ok", "cookies_loaded": len(cookies), "cookie_names": list(cookies.keys())}
+
+
+# Serve the built frontend (npm run build → dist/) when present, so a single process can
+# host both the API and the SPA in production. No-op for local dev where dist/ doesn't exist —
+# `npm run dev`'s Vite dev server handles the frontend there instead.
+_dist_dir = pathlib.Path(__file__).resolve().parent.parent / "dist"
+if _dist_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(_dist_dir), html=True), name="static")
 
 
 if __name__ == "__main__":
