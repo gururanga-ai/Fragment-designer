@@ -138,6 +138,7 @@ async def _stream_glean(url: str, body: dict, cookies: dict):
     Client lives inside the generator so it is not closed prematurely by the route handler.
     """
     last_text = ""
+    last_message_id = None
     buf = ""  # accumulate partial JSON lines across chunks
 
     async with httpx.AsyncClient() as client:
@@ -180,6 +181,17 @@ async def _stream_glean(url: str, body: dict, cookies: dict):
                                 # into the accumulated response the moment the two don't share a prefix.
                                 if m.get("messageType") not in (None, "CONTENT"):
                                     continue
+                                # Deep Research mode streams its OWN visible reasoning/planning trace
+                                # under messageType CONTENT too (not just UPDATE) — messageType alone
+                                # can't tell "thinking out loud" apart from the real final answer.
+                                # Confirmed via raw capture: a single call streamed 3 distinct CONTENT
+                                # messageIds in sequence (2 reasoning passes, then the real answer
+                                # arriving ~1200 lines later) — only the LATEST messageId is the actual
+                                # deliverable, so start over whenever a new one begins.
+                                msg_id = m.get("messageId")
+                                if msg_id != last_message_id:
+                                    last_message_id = msg_id
+                                    last_text = ""
                                 chunk_text = "".join(
                                     f["text"]
                                     for f in m.get("fragments", [])

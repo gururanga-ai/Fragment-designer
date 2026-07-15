@@ -39,6 +39,7 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
       return
     }
     let lastText = ''
+    let lastMessageId = null
     let settled = false
 
     const finish = (fn, arg) => { if (settled) return; settled = true; signal?.removeEventListener('abort', onAbort); fn(arg) }
@@ -56,6 +57,11 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
             // messageType UPDATE, distinct from the real streamed answer (messageType CONTENT) —
             // same shape otherwise, so skipping this leaks the narration into the final text.
             if (m.messageType && m.messageType !== 'CONTENT') continue
+            // Deep Research mode streams its own visible reasoning/planning trace under messageType
+            // CONTENT too (confirmed via raw capture: 3 distinct CONTENT messageIds in one call, the
+            // real answer only in the last one) — restart accumulation whenever messageId changes so
+            // only the latest (actual final) message survives.
+            if (m.messageId !== lastMessageId) { lastMessageId = m.messageId; lastText = '' }
             const chunkText = (m.fragments || []).filter(f => f && typeof f.text === 'string').map(f => f.text).join('')
             if (!chunkText) continue
             lastText = chunkText.startsWith(lastText) ? chunkText : lastText + chunkText
