@@ -4,6 +4,8 @@ import { COMP_COLORS, COMP_ICONS, ELEMENT_LABELS, CHART_TYPES } from '../../util
 import { HtmlNodeRenderer, collectSegments } from './FragmentCanvas'
 import { gleanRunWorkflow } from '../../utils/gleanApi'
 import { safeCopyToClipboard } from '../../utils/clipboard'
+import { extractJson as extractJsonShared } from '../../utils/agentBuilder'
+import { applyGleanSuggestion } from './FragmentDesigner'
 
 // ── Python _AF_NEW_NODES node templates ──────────────────────────────────────
 const AF_NEW_NODES = {
@@ -317,11 +319,10 @@ function InsertNodeDialog({ slotNames, onInsert, onClose }) {
 }
 
 // ── AlignGlean — inline Glean chat for CSS auto-fix ─────────────────────
-function extractJson(text) {
-  const m = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/(\{[\s\S]*\})/)
-  if (!m) return null
-  try { return JSON.parse(m[1] || m[0]) } catch { return null }
-}
+// Uses the shared, bracket/quote-depth-aware extractor (agentBuilder.js) rather than a naive
+// regex — a naive `/\{[\s\S]*\}/` greedy match breaks if Glean's reply has any trailing prose
+// after the JSON block (e.g. "Want me to make that change?"), silently producing garbled/no JSON.
+const extractJson = extractJsonShared
 
 // Deep-merge Style.css from `incoming` into `existing` by tree position.
 // All Config, Conditions, Attributes, Slots structure, Element/Container type
@@ -366,26 +367,20 @@ function applyGleanFixes(existingFrag, result) {
     const merged = deepMergeStyleOnly(existingFrag, result.Fragment)
     return { newFrag: merged, count: 1, mode: 'css-merge' }
   }
-  if (!Array.isArray(result?.suggestions)) return null
-  const safe = result.suggestions.filter(s => s.fix_props || s.remove_props)
-  if (!safe.length) return null
-  let newFrag = structuredClone(existingFrag)
+  if (!Array.isArray(result?.suggestions) || result.suggestions.length === 0) return null
+  // Delegate to the same op-aware applier FragmentDesigner's main suggestions panel uses
+  // (applyGleanSuggestion — set_props/set_config/set_events/add_child/replace_node/delete_node/
+  // merge_json, string path). This used to be a local, stale reimplementation here that only
+  // understood a flat array-form path and fix_props/remove_props/fix_config — it silently did
+  // nothing for the current op-based suggestion schema the backend actually returns (string path,
+  // and structural ops like add_child/merge_json that have no fix_props at all), which is exactly
+  // why Align Fix would explain an issue correctly but never apply the fix.
+  const newFrag = structuredClone(existingFrag)
   let count = 0
-  for (const s of safe) {
-    const path = Array.isArray(s.path) ? s.path : []
-    const node = path.length > 0 ? getByPath(newFrag, path) : newFrag
-    if (!node) continue
-    if (!node.Style) node.Style = {}
-    if (!node.Style.css) node.Style.css = {}
-    if (s.fix_props) Object.assign(node.Style.css, s.fix_props)
-    if (s.remove_props) for (const k of s.remove_props) delete node.Style.css[k]
-    if (s.fix_config) {
-      if (!node.Config) node.Config = {}
-      // Merge config keys individually — never wipe the whole Config object
-      Object.assign(node.Config, s.fix_config)
-    }
-    count++
+  for (const s of result.suggestions) {
+    if (applyGleanSuggestion(newFrag, s)) count++
   }
+  if (count === 0) return { newFrag: existingFrag, count: 0, mode: 'failed' }
   return { newFrag, count, mode: 'suggestions' }
 }
 
@@ -444,12 +439,21 @@ Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the use
       setHistory(h => [...h, { role: 'ai', text: responseRef.current }])
       setStreaming('')
       const parsed = extractJson(responseRef.current)
-      if (parsed) {
-        const result = applyGleanFixes(frag, parsed)
-        if (result) {
-          onApply(result.newFrag)
-          setLastApply({ count: result.count, mode: result.mode })
-        }
+      const result = parsed ? applyGleanFixes(frag, parsed) : null
+      if (result && result.count > 0) {
+        onApply(result.newFrag)
+        setLastApply({ count: result.count, mode: result.mode })
+      } else {
+        // Don't silently no-op — this is exactly "explains the issue but doesn't fix it": either
+        // Glean answered in CONVERSATION MODE (plain text, no JSON — a real answer, just not a
+        // fix) or returned suggestions whose path/op didn't resolve against the current fragment.
+        setLastApply({
+          count: 0,
+          mode: 'none',
+          reason: !parsed
+            ? 'No fix JSON in the response — Glean answered as an explanation. Ask it to apply the change explicitly (e.g. "fix it") if you want it applied.'
+            : 'Glean returned suggestions but none could be applied — the path/op may not match the current fragment structure.',
+        })
       }
       setStatus('done')
     } catch (e) {
@@ -482,7 +486,12 @@ Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the use
         >
           {deepResearch ? '🧠 Thinking' : '⚡ Fast'}
         </button>
-        {lastApply && (
+        {lastApply && lastApply.mode === 'none' && (
+          <span className="ml-auto text-[10px] bg-amber-500 text-white rounded px-1.5 py-0.5 font-semibold" title={lastApply.reason}>
+            ⚠ No fix applied
+          </span>
+        )}
+        {lastApply && lastApply.mode !== 'none' && (
           <span className="ml-auto text-[10px] bg-green-600 text-white rounded px-1.5 py-0.5 font-semibold">
             {lastApply.mode === 'replace' ? '🔄 Fragment replaced' : `✓ ${lastApply.count} fix${lastApply.count !== 1 ? 'es' : ''} applied`}
           </span>
@@ -493,6 +502,12 @@ Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the use
           <button onClick={() => setHistory([])} className="ml-auto text-[10px] text-[#93C5FD] hover:text-white">Clear history</button>
         )}
       </div>
+
+      {lastApply?.mode === 'none' && (
+        <div className="mx-2 mt-1.5 rounded bg-amber-50 border border-amber-300 text-[10px] text-amber-800 px-2 py-1.5">
+          ⚠ {lastApply.reason}
+        </div>
+      )}
 
       {/* quick chips */}
       <div className="flex flex-wrap gap-1 px-2 pt-1.5">

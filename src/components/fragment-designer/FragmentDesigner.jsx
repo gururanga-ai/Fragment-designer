@@ -37,7 +37,7 @@ function restoreTemplateVars(str) {
 }
 
 // ── Glean suggestion path resolver ───────────────────────────────────────────
-function gleanResolvePath(fragmentRoot, path) {
+export function gleanResolvePath(fragmentRoot, path) {
   if (!path) return null
   let p = path.startsWith('Fragment.') ? path.slice(9) : path
   const parts = []
@@ -62,7 +62,7 @@ function gleanResolvePath(fragmentRoot, path) {
   return { parent, key, target: parent?.[key] }
 }
 
-function applyGleanSuggestion(fragmentRoot, suggestion) {
+export function applyGleanSuggestion(fragmentRoot, suggestion) {
   const op = suggestion.op || 'set_props'
   const path = suggestion.path || ''
   const resolved = gleanResolvePath(fragmentRoot, path)
