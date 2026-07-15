@@ -176,6 +176,8 @@ export default function ConfigStep({
     onGleanHistoryChange([])
 
     let configApplied = 0, flowApplied = 0
+    let latestAgentId = config.agentId
+    let latestAgentName = config.agentName
     const errors = []
 
     // Call 1: configure agent (triggers CONFIG MODE)
@@ -187,6 +189,12 @@ export default function ConfigStep({
       const configData = extractJson(configText)
       if (configData && !Array.isArray(configData)) {
         applyGleanConfig(configData)
+        // applyGleanConfig schedules the config state update async — the outer `config` closure
+        // still holds the value from before this call. Step 3 needs the REAL new agentId (not a
+        // stale/empty one) to derive a sensible fragment content name, so capture it directly from
+        // Glean's own CONFIG MODE response rather than reading the stale `config` prop.
+        latestAgentId = configData.agentId || config.agentId
+        latestAgentName = configData.agentName || config.agentName
         configApplied = Object.keys(configData).length
         onGleanHistoryChange(prev => [...prev,
           { role: 'user', text: configPrompt },
@@ -230,8 +238,14 @@ export default function ConfigStep({
     // rendered UI, not just raw data in the chat reply, so treat these as a fragment request too.
     const wantsFragment = /fragment|render\s*ui|dashboard|ui\s*layout|display|shows?\b|showing|screen|table|grid|chart|report|card/i.test(desc)
     if (hasRenderUI || wantsFragment) {
-      const rawId = (config.agentId || '').replace(/^ext-/, '') || (config.agentName || '').replace(/\s+/g, '') || 'agent'
-      const contentName = rawId.charAt(0).toUpperCase() + rawId.slice(1) + 'Fragment'
+      // If the flow step's renderUI action already names an inputJSON, that name IS the contract —
+      // it must be used as-is, or the flow references a content item that doesn't exist. Inventing
+      // a different name here (as this used to do) produces a mismatch: renderUI.inputJSON points
+      // at one name, agentContentsCustom has the fragment under a completely different one.
+      const existingRenderUI = Array.isArray(flowData) ? flowData.find(a => a.type === 'renderUI' && a.inputJSON) : null
+      const rawId = (latestAgentId || '').replace(/^ext-/, '') || (latestAgentName || '').replace(/\s+/g, '') || 'agent'
+      const derivedName = rawId.charAt(0).toUpperCase() + rawId.slice(1) + 'Fragment'
+      const contentName = existingRenderUI?.inputJSON || derivedName
       let layoutIntent = desc
       let generatedFragment = null
 
@@ -252,8 +266,8 @@ export default function ConfigStep({
         // triggered by an empty fragment_json), instead of leaving a Content:'{}' stub that only
         // got filled in if the user separately clicked "Edit in Designer" and waited for Glean.
         // Generation is observed to occasionally return non-fragment output (suggestions/prose)
-        // for the exact same prompt — one retry meaningfully improves the odds of a real result.
-        for (let attempt = 1; attempt <= 2 && !generatedFragment; attempt++) {
+        // for the exact same prompt — retrying meaningfully improves the odds of a real result.
+        for (let attempt = 1; attempt <= 3 && !generatedFragment; attempt++) {
           setStatus(`⏳ Step 3/3: Generating fragment JSON${attempt > 1 ? ' (retry)' : ''}...`)
           let genText = ''
           await gleanRunWorkflow({
