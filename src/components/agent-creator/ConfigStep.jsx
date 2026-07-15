@@ -178,6 +178,7 @@ export default function ConfigStep({
     let configApplied = 0, flowApplied = 0
     let latestAgentId = config.agentId
     let latestAgentName = config.agentName
+    let latestConversational = config.conversational
     const errors = []
 
     // Call 1: configure agent (triggers CONFIG MODE)
@@ -195,6 +196,7 @@ export default function ConfigStep({
         // Glean's own CONFIG MODE response rather than reading the stale `config` prop.
         latestAgentId = configData.agentId || config.agentId
         latestAgentName = configData.agentName || config.agentName
+        if (configData.conversational !== undefined) latestConversational = !!configData.conversational
         configApplied = Object.keys(configData).length
         onGleanHistoryChange(prev => [...prev,
           { role: 'user', text: configPrompt },
@@ -207,7 +209,10 @@ export default function ConfigStep({
     setStatus('⏳ Step 2/3: Generating flow actions...')
     let flowData = null
     try {
-      const flowPrompt = `Build flow — generate actions for the default task: ${desc}`
+      const conversationalNote = latestConversational
+        ? ' This is a conversational, chat-only agent — do NOT include a renderUI action; end the flow with addDataResponse/addTextResponse/addStreamResponse instead.'
+        : ''
+      const flowPrompt = `Build flow — generate actions for the default task: ${desc}${conversationalNote}`
       let flowText = ''
       await gleanChat({ conversation: [{ role: 'user', text: flowPrompt }], useDeepResearch: deepResearch, onPartial: t => { flowText = t } })
       flowData = extractJson(flowText)
@@ -236,7 +241,16 @@ export default function ConfigStep({
     // (addDataResponse) rather than a renderUI action, since that's a valid conversational-agent
     // answer too — but a user asking to "display"/"show" something usually wants an actual
     // rendered UI, not just raw data in the chat reply, so treat these as a fragment request too.
-    const wantsFragment = /fragment|render\s*ui|dashboard|ui\s*layout|display|shows?\b|showing|screen|table|grid|chart|report|card/i.test(desc)
+    // EXCEPT when the user (via Step 1's own CONFIG MODE response) explicitly asked for a
+    // conversational agent — in that case only the hard UI-specific terms count. Without this,
+    // "conversational: true" was silently overridden every time: almost any agent description
+    // touches a soft word like "shows"/"display"/"report" somewhere, so this regex was forcing a
+    // renderUI + fragment onto agents the user explicitly asked to be chat-only.
+    const softUiWords = /display|shows?\b|showing|report/i
+    const hardUiWords = /fragment|render\s*ui|dashboard|ui\s*layout|screen|table|grid|chart|card/i
+    const wantsFragment = latestConversational
+      ? hardUiWords.test(desc)
+      : (hardUiWords.test(desc) || softUiWords.test(desc))
     if (hasRenderUI || wantsFragment) {
       // If the flow step's renderUI action already names an inputJSON, that name IS the contract —
       // it must be used as-is, or the flow references a content item that doesn't exist. Inventing

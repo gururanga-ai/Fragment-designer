@@ -315,7 +315,17 @@ GENERAL FLOW ACTION RULES
 - Do not duplicate actions, render steps, response steps, SQL steps, or transformation steps
 - If a later action depends on an earlier action, make the dependency explicit using outputVariableName and references
 - Use only validated service names, SQL objects, entities, fields, attribute names, payload keys, and identifiers
-- For user-facing UI flows, prefer a legible sequence:
+- CONVERSATIONAL / NON-UI AGENTS — decide this FIRST, before picking a response shape: if the
+  request describes a conversational, chat-based, Q&A, or purely data-lookup agent (no dashboard,
+  table, chart, screen, or rendered UI is asked for), do NOT include a renderUI action — end the
+  flow with addDataResponse / addTextResponse / addStreamResponse instead. Do not default to
+  renderUI just because the description contains a soft word like "shows", "displays", or "reports"
+  — those describe what the AGENT'S ANSWER communicates, not that a UI must render it. Only use
+  renderUI when the user actually asks for a dashboard, table, chart, screen, card layout, or
+  otherwise names a concrete UI surface. If the agent's own config marked conversational: true,
+  treat that as a strong signal to skip renderUI unless the request also names a concrete UI term.
+- For user-facing UI flows (i.e. renderUI is actually warranted per the rule above), prefer a
+  legible sequence:
   1. initialization
   2. optional streaming
   3. filter/default handling
