@@ -60,21 +60,6 @@ function getByPath(root, path) {
   return n
 }
 
-// Renders a selectedPath array (['Slots','Default',0,...]) into the exact dot/bracket string a
-// suggestion's "path" field must use, e.g. "Fragment.Slots.Default[0].Slots.Left[0]". Handing Glean
-// this ready-made string — instead of the " › "-joined human path AlignFix used to send, which the
-// model then had to re-derive/convert itself — closes the same "path doesn't exist in the fragment,
-// suggestion silently fails" failure mode already fixed for the main sidebar chat's selected_node.
-function pathArrayToString(path) {
-  let s = 'Fragment'
-  for (const seg of path) {
-    if (typeof seg === 'number') s += `[${seg}]`
-    else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(seg)) s += `.${seg}`
-    else s += `['${String(seg).replace(/'/g, "\\'")}']`
-  }
-  return s
-}
-
 function deepSet(root, path, value) {
   if (path.length === 0) return value
   const clone = Array.isArray(root) ? [...root] : { ...root }
@@ -427,18 +412,18 @@ function AlignGlean({ frag, selPath, selNode, onApply }) {
     setLastApply(null)
     responseRef.current = ''
     const nodeType = selNode?.Container || selNode?.Element || 'root'
-    const nodePathString = selPath.length > 0 ? pathArrayToString(selPath) : 'Fragment'
+    const nodePath = selPath.length > 0 ? selPath.join(' › ') : '(root)'
     const nodeCss = JSON.stringify(selNode?.Style?.css || {}, null, 2)
     const nodeConfig = JSON.stringify(selNode?.Config || {}, null, 2)
     const fullPrompt = `User request: ${promptText.trim()}
 
 Currently selected node:
-  path: ${nodePathString}
+  path: ${nodePath}
   type: ${nodeType}
   css: ${nodeCss}
   config: ${nodeConfig}
 
-Fix/adjust the selected node (path: ${nodePathString}) based on the user request. Use that exact path string VERBATIM as the suggestion's "path" — it is already correct, do not re-derive or shorten it. Return suggestions or full Fragment per mode rules.`
+Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the user request. Return suggestions or full Fragment per mode rules.`
     const priorTurns = history
     setHistory(h => [...h, { role: 'user', text: promptText.trim() }])
     try {

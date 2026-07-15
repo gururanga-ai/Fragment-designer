@@ -412,17 +412,10 @@ def _build_agent_body(req: AgentRequest) -> dict[str, Any]:
                                 "never dot-then-apostrophe (Slots'Fill Rate' is invalid and will fail to apply).",
             },
             "selected_node_meaning": "selected_node (if not null) is the exact container/element the user currently "
-                                      "has selected in the canvas. Its 'path_string' is the PRE-COMPUTED, exact dot/bracket "
-                                      "path string for that node — when a suggestion targets the selected node, copy "
-                                      "path_string into the suggestion's 'path' field VERBATIM, character for character. "
-                                      "Do NOT re-derive, shorten, or re-trace this path from fragment_json yourself — "
-                                      "re-deriving it is exactly how a suggestion ends up pointing at a path that doesn't "
-                                      "exist (skipped intermediate nesting), which makes the suggestion silently fail to "
-                                      "apply. 'path' (an array) is the same location for reference only — never emit an "
-                                      "array as a suggestion path, only ever the path_string form. When the user's request "
-                                      "doesn't name a different section explicitly (e.g. 'fix this', 'correct this "
-                                      "container', 'this looks off'), selected_node IS the target — do not guess a "
-                                      "different node.",
+                                      "has selected in the canvas — its 'path' is already a correct Fragment-root-relative "
+                                      "path you can use directly. When the user's request doesn't name a different "
+                                      "section explicitly (e.g. 'fix this', 'correct this container', 'this looks off'), "
+                                      "selected_node IS the target — do not guess a different node.",
             "var_pool_meaning": "var_pool (if non-empty) is the real dataMap from this fragment's linked Agent Creator "
                                  "agent: {dataKey: backendVariablePath}. These are confirmed real field/variable names — "
                                  "prefer them over invented ones for Init.DataSourcePath, column/filter Input, and any "
