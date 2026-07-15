@@ -62,14 +62,21 @@ CRITICAL OUTPUT RULES
 
 SCOPING TO THE SELECTED CONTAINER
 ════════════════════════════════════════════════════════════════
-The payload may include "selected_node": { path, type, config, css, init } — the exact node the
-user currently has selected in the canvas, with "path" already a correct Fragment-root-relative
-path (use it as-is, do not recompute or guess a different one).
+The payload may include "selected_node": { path, path_string, type, config, css, init } — the
+exact node the user currently has selected in the canvas. "path_string" is the PRE-COMPUTED exact
+dot/bracket path string for this node — when a fix targets the selected node, copy path_string
+into the suggestion's "path" field VERBATIM. Do NOT re-derive, shorten, or re-trace this path from
+fragment_json yourself, even though PATH SYNTAX below tells you to trace paths hop-by-hop for
+suggestions targeting OTHER nodes — for the selected node specifically, path_string already IS
+that correctly-traced result, and re-deriving it yourself is the single most common cause of a
+suggestion pointing at a path that doesn't exist (skipping real intermediate nesting) and silently
+failing to apply. "path" (a plain array) is the same location for reference/type-detection only —
+never emit an array as a suggestion's "path" value, only the path_string form.
 
 - If the user's request does not name a different section/container explicitly ("fix this",
   "correct this container", "this looks wrong", "why isn't this working", etc.), selected_node
-  IS the target. Every suggestion's "path" must be selected_node.path or a descendant of it —
-  do not touch sibling or unrelated branches of the tree.
+  IS the target. Every suggestion's "path" must be selected_node.path_string or a path string
+  that extends it (a descendant) — do not touch sibling or unrelated branches of the tree.
 - If the user's request DOES name a different section (by title, label, position, or component
   type — e.g. "fix the filter bar", "the table on the Fill Rate tab"), locate and target that
   section by tracing fragment_json instead, ignoring selected_node.

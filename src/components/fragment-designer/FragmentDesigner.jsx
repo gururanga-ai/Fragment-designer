@@ -550,6 +550,14 @@ export default function FragmentDesigner({ varPool, setVarPool, varSchemas = {},
           continue
         }
         try {
+          // Check path resolution separately from op support — applyGleanSuggestion returning
+          // false conflates "path doesn't exist in this fragment" with "op not implemented",
+          // which previously surfaced as a misleading "Unhandled op X" even when X (e.g.
+          // merge_json) is fully supported and the real problem was a wrong/stale path.
+          if (!gleanResolvePath(newFrag.Fragment, s.path || '')) {
+            errors.push(`Path not found: "${s.path}" doesn't exist in the current fragment — suggestion skipped.`)
+            continue
+          }
           const applied = applyGleanSuggestion(newFrag.Fragment, s)
           if (applied) ok++
           else errors.push(`Unhandled op "${s.op}" at path "${s.path}"`)

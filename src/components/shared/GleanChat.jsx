@@ -51,6 +51,22 @@ export default function GleanChat({
 
   const buildPrompt = useCallback((text) => text, [])
 
+  // Pre-render selectedPath (['Slots','Default',0,...]) into the exact dot/bracket string a
+  // suggestion's "path" field must use (e.g. "Fragment.Slots.Default[0].Slots.Left[0]..."). Handing
+  // Glean this ready-made string — instead of making it convert/re-derive the array itself — closes
+  // an observed failure mode where the model would re-trace the tree from scratch and produce a
+  // shorter, wrong path (skipping real intermediate nesting) rather than trust the given selection,
+  // causing "suggestion" applies to silently fail with a path that doesn't exist in the fragment.
+  const pathArrayToString = path => {
+    let s = 'Fragment'
+    for (const seg of path) {
+      if (typeof seg === 'number') s += `[${seg}]`
+      else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(seg)) s += `.${seg}`
+      else s += `['${String(seg).replace(/'/g, "\\'")}']`
+    }
+    return s
+  }
+
   // Walk fragmentJson down selectedPath (['Slots','Default',0,...]) to describe what the user
   // is actually looking at in the canvas right now — without this, "fix this"/"correct this
   // container" in the sidebar chat had nothing to anchor to but the full fragment tree + prose,
@@ -65,6 +81,7 @@ export default function GleanChat({
     if (!node || typeof node !== 'object') return null
     return {
       path: selectedPath,
+      path_string: pathArrayToString(selectedPath),
       type: node.Container || node.Element || '',
       config: node.Config || {},
       css: node.Style?.css || {},
