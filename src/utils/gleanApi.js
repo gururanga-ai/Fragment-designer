@@ -52,6 +52,10 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
           if (obj.error) { finish(reject, new Error(obj.error)); return }
           for (const m of obj.messages || []) {
             if (m.author === 'USER') continue
+            // Glean tags "**Searching company knowledge**" / "**Reading:**" progress narration as
+            // messageType UPDATE, distinct from the real streamed answer (messageType CONTENT) —
+            // same shape otherwise, so skipping this leaks the narration into the final text.
+            if (m.messageType && m.messageType !== 'CONTENT') continue
             const chunkText = (m.fragments || []).filter(f => f && typeof f.text === 'string').map(f => f.text).join('')
             if (!chunkText) continue
             lastText = chunkText.startsWith(lastText) ? chunkText : lastText + chunkText

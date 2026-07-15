@@ -173,6 +173,13 @@ async def _stream_glean(url: str, body: dict, cookies: dict):
                             for m in obj.get("messages", []):
                                 if m.get("author") == "USER":
                                     continue
+                                # Glean tags its own "**Searching company knowledge**" / "**Reading:**"
+                                # progress narration as messageType UPDATE, distinct from the real
+                                # streamed answer (messageType CONTENT) — same shape (author/fragments),
+                                # so without this check the narration text gets concatenated straight
+                                # into the accumulated response the moment the two don't share a prefix.
+                                if m.get("messageType") not in (None, "CONTENT"):
+                                    continue
                                 chunk_text = "".join(
                                     f["text"]
                                     for f in m.get("fragments", [])
