@@ -879,35 +879,47 @@ export default function FlowBuilder({
 
       if (rawActions.length > 0) insertActions(rawActions)
 
-      for (const fu of fragmentUpdates) {
-        const fuName = fu.name
-        const fuContent = fu.content
-        if (!fuName || !fuContent) continue
+      // setActions (defined above) takes a plain array, not a functional updater — passing an
+      // updater function here previously stored the FUNCTION ITSELF as flows[flowId][taskId],
+      // corrupting that task's actions from an array into a function value. Every later render
+      // (including just re-opening this same task, or the very next FlowBuilder re-render) then
+      // crashed on `(flows[flowId]?.[taskId] || []).map(...)` with ".map is not a function",
+      // since a function is truthy so `|| []` never kicked in. Accumulate across all
+      // fragmentUpdates locally and commit once with a real array, same one-shot pattern
+      // insertActions already uses above.
+      if (fragmentUpdates.length > 0) {
+        let updatedActions = actions.map(({ _id, ...a }) => a)
+        for (const fu of fragmentUpdates) {
+          const fuName = fu.name
+          const fuContent = fu.content
+          if (!fuName || !fuContent) continue
 
-        const contentStr = typeof fuContent === 'string' ? fuContent : JSON.stringify(fuContent, null, 2)
-        const updatedItem = { Name: fuName, Content: contentStr, AgentContentType: 'inputs', ContentType: 'json' }
+          const contentStr = typeof fuContent === 'string' ? fuContent : JSON.stringify(fuContent, null, 2)
+          const updatedItem = { Name: fuName, Content: contentStr, AgentContentType: 'inputs', ContentType: 'json' }
 
-        // Merge into contents — update existing by name, or append
-        onContentsChange(prev => {
-          const list = prev || []
-          const idx = list.findIndex(c => (c.Name || c.name) === fuName)
-          if (idx !== -1) {
-            const next = [...list]
-            next[idx] = { ...next[idx], Content: contentStr }
-            return next
-          }
-          return [...list, updatedItem]
-        })
+          // Merge into contents — update existing by name, or append
+          onContentsChange(prev => {
+            const list = prev || []
+            const idx = list.findIndex(c => (c.Name || c.name) === fuName)
+            if (idx !== -1) {
+              const next = [...list]
+              next[idx] = { ...next[idx], Content: contentStr }
+              return next
+            }
+            return [...list, updatedItem]
+          })
 
-        // Keep _fragment_json on matching renderUI actions in sync
-        setActions(prev => prev.map(a =>
-          a.type === 'renderUI' && a.inputJSON === fuName
-            ? { ...a, _fragment_json: { ...updatedItem } }
-            : a
-        ))
+          // Keep _fragment_json on matching renderUI actions in sync
+          updatedActions = updatedActions.map(a =>
+            a.type === 'renderUI' && a.inputJSON === fuName
+              ? { ...a, _fragment_json: { ...updatedItem } }
+              : a
+          )
 
-        // Switch to Fragment Designer and load the updated fragment
-        onHandoffToDesigner?.({ ...updatedItem })
+          // Switch to Fragment Designer and load the updated fragment
+          onHandoffToDesigner?.({ ...updatedItem })
+        }
+        setActions(updatedActions)
       }
     }
     if (type === 'update_action') updateSelectedAction(data)
