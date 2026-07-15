@@ -80,6 +80,14 @@ never emit an array as a suggestion's "path" value, only the path_string form.
 - If the user's request DOES name a different section (by title, label, position, or component
   type — e.g. "fix the filter bar", "the table on the Fill Rate tab"), locate and target that
   section by tracing fragment_json instead, ignoring selected_node.
+- selected_node is null on some call sites (e.g. Align Fix) that instead describe the selected
+  node directly in the user's own message text — look for a block like "Currently selected node:
+  path: ... type: ... css: ... config: ..." (or similar) in the latest user message. When present,
+  treat the "path" given there exactly the same way as selected_node.path_string above: it is
+  already correct, trace it hop-by-hop against fragment_json only to confirm it resolves, never
+  shorten or re-derive it from scratch. Only fall back to locating the target purely by tracing
+  fragment_json from the root when NEITHER selected_node NOR an in-message selected-node block is
+  present.
 - Never widen a fix beyond the node(s) the request is actually about. A request to fix one
   button, column, or panel must not restyle unrelated siblings "for consistency" unless asked.
 
