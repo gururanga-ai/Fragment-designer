@@ -2,6 +2,14 @@ import { useState, useMemo } from 'react'
 import { COMP_COLORS, COMP_ICONS, ELEMENT_LABELS, CHART_TYPES } from '../../utils/fragmentData'
 import { makeDefaultElement } from '../../utils/fragmentData'
 
+// A Config field like LabelKey is meant to be a plain string, but malformed/foreign JSON (or a
+// bad Glean response) can put a whole nested object there instead. Rendering that object directly
+// as JSX children throws "Objects are not valid as a React child" and crashes the whole canvas —
+// this wraps every risky render site so a bad value degrades to the fallback instead of crashing.
+function safeText(v, fallback = '') {
+  return (v && typeof v === 'object') ? fallback : (v ?? fallback)
+}
+
 // Distinct Config.SectionName values across the whole tree — powers the "Segment" datalist
 // so users can pick an existing segment or type a new one (mirrors Python's card.segment tagging).
 export function collectSegments(node, out = new Set()) {
@@ -35,30 +43,30 @@ function HtmlElementBody({ type, cfg, node }) {
   const s = (extra) => ({ padding: '4px 8px', ...extra })
   switch (type) {
     case 'key-value': case 'key-value-detail':
-      return <div style={s({ display: 'flex', alignItems: 'baseline', gap: 6 })}><span style={{ fontSize: 10, color: '#64748B' }}>{cfg.LabelKey || 'Label'}</span><span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{input || '—'}</span></div>
+      return <div style={s({ display: 'flex', alignItems: 'baseline', gap: 6 })}><span style={{ fontSize: 10, color: '#64748B' }}>{safeText(cfg.LabelKey, 'Label')}</span><span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{safeText(input, '—')}</span></div>
     case 'button': case 'action-button': {
       const v = cfg.variant || 'primary'
       const [bg, fg] = v === 'secondary' ? ['#F1F5F9','#374151'] : v === 'danger' ? ['#FEE2E2','#991B1B'] : v === 'ghost' ? ['transparent','#374151'] : ['#1E3A8A','white']
-      return <div style={s()}><span style={{ display: 'inline-block', padding: '4px 12px', borderRadius: 3, backgroundColor: bg, color: fg, fontSize: 10, fontWeight: 600 }}>{cfg.LabelKey || 'Button'}</span></div>
+      return <div style={s()}><span style={{ display: 'inline-block', padding: '4px 12px', borderRadius: 3, backgroundColor: bg, color: fg, fontSize: 10, fontWeight: 600 }}>{safeText(cfg.LabelKey, 'Button')}</span></div>
     }
     case 'text': case 'message':
-      return <div style={s({ fontSize: 11, color: '#374151' })}>{cfg.LabelKey || 'Text'}</div>
+      return <div style={s({ fontSize: 11, color: '#374151' })}>{safeText(cfg.LabelKey, 'Text')}</div>
     case 'pill':
       return <div style={s()}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 12, backgroundColor: '#E0F2FE', color: '#0369A1', fontSize: 10, fontWeight: 600 }}>{input || 'Status'}</span></div>
     case 'search':
-      return <div style={s()}><div style={{ display: 'flex', gap: 4, border: '1px solid #CBD5E1', borderRadius: 3, padding: '3px 8px', backgroundColor: 'white' }}><span style={{ fontSize: 10, color: '#94A3B8' }}>🔍</span><span style={{ fontSize: 10, color: '#94A3B8' }}>{cfg.LabelKey || 'Search...'}</span></div></div>
+      return <div style={s()}><div style={{ display: 'flex', gap: 4, border: '1px solid #CBD5E1', borderRadius: 3, padding: '3px 8px', backgroundColor: 'white' }}><span style={{ fontSize: 10, color: '#94A3B8' }}>🔍</span><span style={{ fontSize: 10, color: '#94A3B8' }}>{safeText(cfg.LabelKey, 'Search...')}</span></div></div>
     case 'input': case 'textarea':
-      return <div style={s()}><div style={{ border: '1px solid #CBD5E1', borderRadius: 3, padding: '4px 8px', fontSize: 10, color: '#94A3B8', backgroundColor: 'white' }}>{cfg.LabelKey || 'Input...'}</div></div>
+      return <div style={s()}><div style={{ border: '1px solid #CBD5E1', borderRadius: 3, padding: '4px 8px', fontSize: 10, color: '#94A3B8', backgroundColor: 'white' }}>{safeText(cfg.LabelKey, 'Input...')}</div></div>
     case 'combobox': case 'dropdown':
-      return <div style={s()}><div style={{ border: '1px solid #CBD5E1', borderRadius: 3, padding: '4px 8px', fontSize: 10, color: '#374151', backgroundColor: 'white', display: 'flex', justifyContent: 'space-between' }}><span>{cfg.LabelKey || 'Select...'}</span><span>▾</span></div></div>
+      return <div style={s()}><div style={{ border: '1px solid #CBD5E1', borderRadius: 3, padding: '4px 8px', fontSize: 10, color: '#374151', backgroundColor: 'white', display: 'flex', justifyContent: 'space-between' }}><span>{safeText(cfg.LabelKey, 'Select...')}</span><span>▾</span></div></div>
     case 'banner': {
       const bc = { info: ['#EFF6FF','#1D4ED8'], warning: ['#FFFBEB','#92400E'], error: ['#FEF2F2','#991B1B'], success: ['#F0FDF4','#166534'] }
       const [bg, fg] = bc[cfg.type] || bc.info
       const icons = { info: 'ℹ️', warning: '⚠️', error: '❌', success: '✅' }
-      return <div style={{ margin: '4px 8px', padding: '6px 10px', borderRadius: 4, backgroundColor: bg, color: fg, fontSize: 10, display: 'flex', alignItems: 'center', gap: 6 }}><span>{icons[cfg.type] || 'ℹ️'}</span>{cfg.LabelKey || 'Banner'}</div>
+      return <div style={{ margin: '4px 8px', padding: '6px 10px', borderRadius: 4, backgroundColor: bg, color: fg, fontSize: 10, display: 'flex', alignItems: 'center', gap: 6 }}><span>{icons[cfg.type] || 'ℹ️'}</span>{safeText(cfg.LabelKey, 'Banner')}</div>
     }
     case 'link': case 'related-link':
-      return <div style={s({ fontSize: 10, color: '#2563EB', textDecoration: 'underline', cursor: 'pointer' })}>{cfg.LabelKey || cfg.href || 'Link'}</div>
+      return <div style={s({ fontSize: 10, color: '#2563EB', textDecoration: 'underline', cursor: 'pointer' })}>{safeText(cfg.LabelKey || cfg.href, 'Link')}</div>
     case 'filter-panel': {
       const rawSections = (cfg.Attributes || node.Attributes || [])
       const attrs = rawSections.flatMap(g => g.filters || g.items || [g]).filter(f => f && (f.LabelKey || f.label || f.SectionName))
@@ -66,7 +74,7 @@ function HtmlElementBody({ type, cfg, node }) {
       const renderSection = (f, i) => (
         <div key={i} style={{ marginBottom: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{f.LabelKey || f.label || f.SectionName || `Filter ${i + 1}`}</span>
+            <span style={{ fontSize: 9, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{safeText(f.LabelKey || f.label || f.SectionName, `Filter ${i + 1}`)}</span>
             <span style={{ fontSize: 9, color: '#6B7280' }}>Clear All</span>
           </div>
           <div style={{ height: 24, border: '1px solid #CBD5E1', borderRadius: 3, backgroundColor: 'white', display: 'flex', alignItems: 'center', padding: '0 6px' }}>
@@ -98,7 +106,7 @@ function HtmlElementBody({ type, cfg, node }) {
       )
     }
     default:
-      return <div style={s({ fontSize: 10, color: '#94A3B8' })}>{input || cfg.LabelKey || type}</div>
+      return <div style={s({ fontSize: 10, color: '#94A3B8' })}>{safeText(input || cfg.LabelKey, type)}</div>
   }
 }
 
@@ -163,7 +171,7 @@ export function HtmlNodeRenderer({ node, path = [], selectedPath = [], onSelect 
         <div style={{ display: 'flex', backgroundColor: '#F1F5F9', borderBottom: '1px solid #E2E8F0' }}>
           {cols.slice(0, 6).map((col, i) => (
             <div key={i} style={{ flex: 1, padding: '4px 8px', fontSize: 10, fontWeight: 600, color: '#374151', borderRight: '1px solid #E2E8F0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {col.Config?.LabelKey || `Col ${i + 1}`}
+              {safeText(col.Config?.LabelKey, `Col ${i + 1}`)}
             </div>
           ))}
           {cols.length === 0 && <div style={{ padding: '4px 8px', fontSize: 10, color: '#94A3B8' }}>No columns</div>}
@@ -224,7 +232,7 @@ export function HtmlNodeRenderer({ node, path = [], selectedPath = [], onSelect 
         <div style={{ fontSize: 10, fontWeight: 700, color: '#374151', marginBottom: 6 }}>🔍 Filters</div>
         {attrs.slice(0, 5).map((f, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <div style={{ fontSize: 9, color: '#64748B', width: 60, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.LabelKey || f.label || `Filter ${i + 1}`}</div>
+            <div style={{ fontSize: 9, color: '#64748B', width: 60, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{safeText(f.LabelKey || f.label, `Filter ${i + 1}`)}</div>
             <div style={{ flex: 1, height: 18, backgroundColor: 'white', border: '1px solid #CBD5E1', borderRadius: 3 }} />
           </div>
         ))}
@@ -283,7 +291,7 @@ export function HtmlNodeRenderer({ node, path = [], selectedPath = [], onSelect 
         onClick={click} {...hover}>
         {hovered && <HoverBadge label="actions-popover" color={color} />}
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', border: '1px solid #CBD5E1', borderRadius: 3, backgroundColor: 'white', fontSize: 11, fontWeight: 500, color: '#374151' }}>
-          <span>{cfg.LabelKey || 'Actions'}</span>
+          <span>{safeText(cfg.LabelKey, 'Actions')}</span>
           <span style={{ fontSize: 9, color: '#6B7280' }}>▾</span>
         </div>
         {hasChildren && (
@@ -304,7 +312,7 @@ export function HtmlNodeRenderer({ node, path = [], selectedPath = [], onSelect 
     const enableFilter = cfg.EnableFilter !== false
     const options = enableFilter
       ? (cfg.Filter?.StaticList || []).map(o => o.AttributeKey || o.Label || o.UID || '?')
-      : (cfg.Segments || []).map(o => o.LabelKey || o.AttributeKey || o.Id || '?')
+      : (cfg.Segments || []).map(o => safeText(o.LabelKey || o.AttributeKey || o.Id, '?'))
     return (
       <div style={{ display: 'inline-flex', alignItems: 'center', ...nodeCss, ...selOutline, cursor: 'pointer', position: 'relative', boxSizing: 'border-box' }}
         onClick={click} {...hover}>
@@ -562,7 +570,7 @@ function NodeRenderer({ node, path, selectedPath, onSelect, onChange, depth, var
         </span>
         <span className="text-xs font-semibold" style={{ color }}>{label}</span>
         {node.Config?.title && <span className="text-xs text-[#64748B] ml-1 truncate">— {node.Config.title}</span>}
-        {node.Config?.LabelKey && <span className="text-xs text-[#64748B] ml-1 truncate">— {node.Config.LabelKey}</span>}
+        {node.Config?.LabelKey && typeof node.Config.LabelKey !== 'object' && <span className="text-xs text-[#64748B] ml-1 truncate">— {node.Config.LabelKey}</span>}
         {node.Input && <span className="text-xs text-[#94A3B8] ml-auto font-mono truncate">{node.Input}</span>}
       </div>
 
@@ -790,7 +798,7 @@ function TablePreview({ node }) {
         <div className="flex bg-[#F1F5F9]">
           {cols.slice(0, 6).map((col, ci) => (
             <div key={ci} className="flex-1 px-2 py-1 text-xs font-semibold text-[#374151] border-r border-[#E2E8F0] last:border-0 truncate">
-              {col.Config?.LabelKey || `Col ${ci + 1}`}
+              {safeText(col.Config?.LabelKey, `Col ${ci + 1}`)}
             </div>
           ))}
           {cols.length === 0 && <div className="px-2 py-1 text-xs text-[#94A3B8]">No columns — edit properties →</div>}
@@ -1078,7 +1086,7 @@ function ElementPreview({ node, type }) {
     case 'key-value-detail':
       return (
         <div className="px-3 py-2 flex gap-3">
-          <span className="text-xs text-[#64748B]">{cfg.LabelKey || 'Label'}</span>
+          <span className="text-xs text-[#64748B]">{safeText(cfg.LabelKey, 'Label')}</span>
           <span className="text-xs font-medium text-[#111827]">{input || '—'}</span>
         </div>
       )
@@ -1090,14 +1098,14 @@ function ElementPreview({ node, type }) {
       return (
         <div className="px-3 py-2">
           <span className="inline-block px-3 py-1 rounded text-xs font-medium border" style={{ backgroundColor: varBg, color: varFg }}>
-            {cfg.LabelKey || 'Button'}
+            {safeText(cfg.LabelKey, 'Button')}
           </span>
         </div>
       )
     }
     case 'text':
     case 'message':
-      return <div className="px-3 py-2 text-sm text-[#374151]">{cfg.LabelKey || 'Text'}</div>
+      return <div className="px-3 py-2 text-sm text-[#374151]">{safeText(cfg.LabelKey, 'Text')}</div>
     case 'pill':
       return (
         <div className="px-3 py-2">
@@ -1113,14 +1121,14 @@ function ElementPreview({ node, type }) {
       return (
         <div className="px-3 py-2 mx-2 mb-1 rounded flex items-center gap-2" style={{ backgroundColor: bg, color: fg }}>
           <span>{icons[cfg.type] || 'ℹ️'}</span>
-          <span className="text-xs">{cfg.LabelKey || 'Banner message'}</span>
+          <span className="text-xs">{safeText(cfg.LabelKey, 'Banner message')}</span>
         </div>
       )
     }
     case 'progress-bar':
       return (
         <div className="px-3 py-2">
-          <p className="text-xs text-[#64748B] mb-1">{cfg.LabelKey || 'Progress'}</p>
+          <p className="text-xs text-[#64748B] mb-1">{safeText(cfg.LabelKey, 'Progress')}</p>
           <div className="h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
             <div className="h-full w-2/3 bg-[#EA580C] rounded-full" />
           </div>
@@ -1138,7 +1146,7 @@ function ElementPreview({ node, type }) {
       return (
         <div className="px-3 py-2">
           <select disabled className="w-full border rounded px-2 py-1 text-xs bg-[#F8FAFC]">
-            <option>{cfg.LabelKey || 'Select...'}</option>
+            <option>{safeText(cfg.LabelKey, 'Select...')}</option>
           </select>
         </div>
       )
@@ -1146,7 +1154,7 @@ function ElementPreview({ node, type }) {
     case 'related-link':
       return (
         <div className="px-3 py-2 text-xs text-[#2563EB] underline cursor-pointer">
-          {cfg.LabelKey || cfg.href || 'Link'}
+          {safeText(cfg.LabelKey || cfg.href, 'Link')}
         </div>
       )
     case 'search':
@@ -1172,7 +1180,7 @@ function ElementPreview({ node, type }) {
     default:
       return (
         <div className="px-3 py-2 text-xs text-[#94A3B8]">
-          {input || cfg.LabelKey || type}
+          {safeText(input || cfg.LabelKey, type)}
         </div>
       )
   }

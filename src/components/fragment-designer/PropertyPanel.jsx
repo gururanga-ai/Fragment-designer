@@ -2027,7 +2027,8 @@ function TableConfigEditor({ node, cfg, sty, updateNode, ensureInsightHost, varP
         </div>
       )}
       {cols.map((col, i) => {
-        const labelKey = col.Config?.LabelKey || `Column ${i + 1}`
+        const rawLabelKey = col.Config?.LabelKey
+        const labelKey = (rawLabelKey && typeof rawLabelKey === 'object') ? `Column ${i + 1}` : (rawLabelKey || `Column ${i + 1}`)
         const fk = getColFieldKey(col)
         const badge = linkBadge(col)
         const open = colEditIdx === i
