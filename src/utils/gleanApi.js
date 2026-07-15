@@ -78,12 +78,12 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
  * onPartial(text) is called with the growing response as it streams.
  * Returns the final full text.
  */
-export async function gleanChat({ conversation, chatId, agent_context, useDeepResearch, onPartial, onFallback, signal }) {
+export async function gleanChat({ conversation, chatId, agent_context, useDeepResearch, mode, onPartial, onFallback, signal }) {
   const proxyCall = async () => {
     const resp = await fetch('/api/glean/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch }),
+      body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch, mode: mode || 'agent_creator' }),
       signal,
     })
     if (!resp.ok) {
@@ -97,7 +97,7 @@ export async function gleanChat({ conversation, chatId, agent_context, useDeepRe
     const built = await fetch('/api/glean/chat/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch }),
+      body: JSON.stringify({ conversation, chatId, agent_context: agent_context || null, useDeepResearch: !!useDeepResearch, mode: mode || 'agent_creator' }),
       signal,
     }).then(r => r.json())
     try {

@@ -25,6 +25,18 @@ from pydantic import BaseModel, Field
 from agent_creator_prompt import GLEAN_SYSTEM_PROMPT
 from fragment_designer_prompt import ALIGN_FIX_SYSTEM
 
+# Enhance Prompt uses this instead of GLEAN_SYSTEM_PROMPT — GLEAN_SYSTEM_PROMPT frames the whole
+# exchange as "generate agent JSON in one of these 3 modes", which made Glean respond to Enhance's
+# plain-text request with a full CONFIG/FLOW/FRAGMENT-shaped JSON blob (sometimes inventing/reusing
+# unrelated existing-agent context it found via company search) instead of a rewritten description,
+# even though the per-call meta-prompt explicitly asked for plain text only. Enhance needs a system
+# framing that has no JSON-mode concept at all.
+ENHANCE_SYSTEM_PROMPT = """You are a research assistant helping refine a short, informal request for a new data agent into a detailed, implementation-ready description.
+
+Use your company search tools (Confluence, Bitbucket, entity/data-schema knowledge, similar existing agents) to ground the rewrite in real, confirmed facts — never invent field names, table names, or entity names you can't confirm.
+
+You are NOT building or configuring an agent yourself. Do not output agent JSON, flow actions, fragment JSON, or any structured data of any kind. Always respond with plain prose text only — no JSON, no markdown code fences, no bullet-only outline, no preamble like "Here is...". Just the rewritten description, ready to paste into another tool."""
+
 app = FastAPI(title="MAWM Agent Tools Proxy")
 
 app.add_middleware(
@@ -194,6 +206,7 @@ class ChatRequest(BaseModel):
     chatId: str | None = None
     agent_context: dict | None = None
     useDeepResearch: bool = False
+    mode: str = "agent_creator"  # "agent_creator" (default, CONFIG/FLOW/FRAGMENT JSON modes) | "enhance" (plain-text research rewrite, no JSON)
 
 class AgentRequest(BaseModel):
     prompt: str
@@ -229,10 +242,11 @@ def _build_chat_body(req: ChatRequest) -> dict[str, Any]:
     now = _now_iso()
     messages = []
     if not req.chatId:
+        system_text = ENHANCE_SYSTEM_PROMPT if req.mode == "enhance" else GLEAN_SYSTEM_PROMPT
         messages.append({
             "agentConfig": {"agent": "FAST"},
             "author": "USER",
-            "fragments": [{"text": GLEAN_SYSTEM_PROMPT}],
+            "fragments": [{"text": system_text}],
             "messageType": "CONTENT",
             "ts": now,
         })

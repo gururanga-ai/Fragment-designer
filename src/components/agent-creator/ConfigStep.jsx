@@ -539,6 +539,7 @@ function FullAutofillModal({ onClose, onRun }) {
       let fellBack = false
       await gleanChat({
         conversation: [{ role: 'user', text: buildEnhancePrompt(original) }],
+        mode: 'enhance',
         useDeepResearch: deepResearch,
         onPartial: t => { text = t; setDesc(t) },
         onFallback: () => { fellBack = true },
