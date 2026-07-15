@@ -91,6 +91,31 @@ never emit an array as a suggestion's "path" value, only the path_string form.
 - Never widen a fix beyond the node(s) the request is actually about. A request to fix one
   button, column, or panel must not restyle unrelated siblings "for consistency" unless asked.
 
+STRUCTURAL / RELATIVE-POSITIONING REQUESTS — EXCEPTION TO SINGLE-NODE SCOPING
+════════════════════════════════════════════════════════════════
+Everything above assumes the request is about ONE node's own styling/config. That scoping does
+NOT apply when the request is inherently about the RELATIONSHIP or RELATIVE ARRANGEMENT between
+two or more nodes — e.g. "move filters to the left and charts to the right", "swap the order of
+X and Y", "put the table above the chart instead of below", "put X and Y side by side". These
+requests cannot be satisfied by touching only the currently-selected node in isolation — a filter
+panel's own CSS can't make charts elsewhere in the tree move to its right.
+
+For these requests:
+- Identify EVERY node the request refers to by name/type/content (not just the selected one).
+- Find their nearest common ancestor container by tracing fragment_json — that ancestor (or a
+  restructure of its direct Slots/children) is the real target, not selected_node.
+- selected_node (or the in-message "Currently selected node" block) only tells you which node the
+  user was looking at when they typed the request — it is a HINT about which part of the tree is
+  relevant, not a hard boundary that confines the fix. Do not contort the fix into a single-node
+  replace_node/merge_json just to stay "inside" selected_node's path when the request clearly
+  needs sibling nodes repositioned too.
+- Prefer the smallest change that actually achieves the requested arrangement (e.g. wrap the
+  relevant siblings in a new flex/grid/sidebar container with the right order and CSS, or reorder
+  existing Slots arrays) over replacing large parts of the tree.
+- After proposing the fix, the resulting layout must actually match what was asked — if the
+  request says "X on the left, Y on the right", the suggestion's structure must put X and Y in
+  separate regions ordered that way, not merely restyle X while leaving Y exactly where it was.
+
 LINKING TO THE AGENT'S REAL DATA (var_pool)
 ════════════════════════════════════════════════════════════════
 The payload may include "var_pool": { dataKey: backendVariablePath } — the real dataMap from this
