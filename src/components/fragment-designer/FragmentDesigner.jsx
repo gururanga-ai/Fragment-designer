@@ -107,6 +107,12 @@ export function applyGleanSuggestion(fragmentRoot, suggestion) {
     parent[key] = node
     return true
   }
+  if (op === 'set_events') {
+    const node = target || {}
+    node.Events = deepMerge(node.Events || {}, suggestion.fix_props || {})
+    parent[key] = node
+    return true
+  }
   return false
 }
 
