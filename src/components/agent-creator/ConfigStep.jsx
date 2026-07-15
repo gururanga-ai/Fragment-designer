@@ -89,7 +89,7 @@ export default function ConfigStep({
       const h = data._content_handoff
       const item = {
         Name: h.fileName || 'content',
-        AgentContentType: h.contentType || 'script',
+        AgentContentType: h.contentType || 'scripts',
         language: h.language || '',
         Content: (h.payload || {}).content || '',
         description: (h.payload || {}).description || '',
@@ -254,7 +254,10 @@ export default function ConfigStep({
 
       const newContent = {
         Name: contentName,
-        AgentContentType: 'fragment',
+        // Valid AgentContentType values are flows/genAIPrompts/inputs/scripts — no "fragment" type
+        // exists on the platform. renderUI.inputJSON loads from the agent's inputs repository, so
+        // fragment content is stored as 'inputs' like any other input JSON.
+        AgentContentType: 'inputs',
         language: '',
         Content: generatedFragment ? JSON.stringify(generatedFragment, null, 2) : '{}',
         description: layoutIntent,

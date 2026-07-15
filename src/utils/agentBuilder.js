@@ -10,7 +10,20 @@ export function buildAgentJson(config, flows, agentContentsCustom) {
   for (const item of (Array.isArray(agentContentsCustom) ? agentContentsCustom : [])) {
     if (!item || typeof item !== 'object') continue
     const n = item.Name || item.name
-    if (n && !seen.has(n)) { contents.push(structuredClone(item)); seen.add(n) }
+    if (n && !seen.has(n)) {
+      // Authoring/export shape uses lowercase name/agentContentType/content (matches the real
+      // platform's "inner agent JSON" convention) — distinct from the PascalCase Name/
+      // AgentContentType/Content used by the save/publish wrapper (buildPublishPayload) and by
+      // our own internal app state, which stays PascalCase.
+      const { Name, name, AgentContentType, agentContentType, Content, content, ...rest } = structuredClone(item)
+      contents.push({
+        ...rest,
+        name: name || Name,
+        agentContentType: agentContentType || AgentContentType || 'inputs',
+        content: content ?? Content ?? '',
+      })
+      seen.add(n)
+    }
   }
 
   const flowsOut = {}
@@ -186,12 +199,23 @@ export function parseAgentJson(data) {
   }
 
   const rawContents = data.agentContentsCustom || data.AgentContentsCustom || []
-  const agentContentsCustom = Array.isArray(rawContents) ? rawContents : []
+  // Normalize to PascalCase (Name/AgentContentType/Content) regardless of import shape — our own
+  // internal app state (ConfigStep, FlowBuilder, ContentsManager) always reads/writes PascalCase;
+  // the authoring/export template uses lowercase name/agentContentType/content for these items.
+  const agentContentsCustom = (Array.isArray(rawContents) ? rawContents : [])
+    .filter(item => item && typeof item === 'object')
+    .map(item => {
+      const { Name, name, AgentContentType, agentContentType, Content, content, ...rest } = item
+      return {
+        ...rest,
+        Name: Name || name,
+        AgentContentType: AgentContentType || agentContentType || 'inputs',
+        Content: Content ?? content ?? '',
+      }
+    })
   const contentsByName = {}
   for (const item of agentContentsCustom) {
-    if (!item || typeof item !== 'object') continue
-    const n = item.Name || item.name
-    if (n) contentsByName[n] = item
+    if (item.Name) contentsByName[item.Name] = item
   }
 
   const flows = {}

@@ -131,7 +131,7 @@ export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHa
             if (!Array.isArray(taskActions)) continue
             for (const a of taskActions) {
               if (a.type === 'renderUI' && a.inputJSON === name) {
-                a._fragment_json = { Name: name, AgentContentType: 'fragment', Content: contentStr }
+                a._fragment_json = { Name: name, AgentContentType: 'inputs', Content: contentStr }
               }
             }
           }

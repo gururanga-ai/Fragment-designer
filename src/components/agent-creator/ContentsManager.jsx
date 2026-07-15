@@ -4,6 +4,20 @@ import JsonEditor from '../shared/JsonEditor'
 
 const STARTER = { Name: 'myContent', AgentContentType: 'inputs', Content: '' }
 
+// There's no "fragment" AgentContentType on the platform — real fragments are stored as plain
+// 'inputs' items like any other input JSON, indistinguishable by type alone. Detect by shape:
+// does Content parse to something with a Fragment/Container/Element node in it.
+function looksLikeFragment(item) {
+  const raw = item?.Content ?? item?.content
+  if (typeof raw !== 'string' || !raw.trim()) return false
+  try {
+    const p = JSON.parse(raw)
+    return !!(p && typeof p === 'object' && (p.Fragment || p.Container || p.Element))
+  } catch {
+    return false
+  }
+}
+
 export default function ContentsManager({ contents, onContentsChange, onClose, onHandoffToDesigner }) {
   const [selIdx, setSelIdx] = useState(null)
   const [editing, setEditing] = useState(null) // { idx: number|null, json: object }
@@ -59,7 +73,7 @@ export default function ContentsManager({ contents, onContentsChange, onClose, o
         <Btn label="Edit Selected" onClick={openEdit} disabled={selIdx === null} amber />
         <Btn label="Delete Selected" onClick={handleDelete} disabled={selIdx === null} red />
         <Btn label="Import JSON Array" onClick={handleImport} />
-        {sel && (sel.AgentContentType || sel.agentContentType) === 'fragment' && onHandoffToDesigner && (
+        {sel && looksLikeFragment(sel) && onHandoffToDesigner && (
           <Btn label="🎨 Edit in Designer" onClick={() => onHandoffToDesigner({ ...sel })} />
         )}
       </div>
