@@ -36,6 +36,9 @@ const ACTION_INFO = {
   callFlow:        { icon: '>F',  color: '#0369A1', label: 'Call Flow' },
   addMessage:      { icon: 'M',   color: '#374151', label: 'Add Message' },
   extractEntities: { icon: 'EE',  color: '#374151', label: 'Extract Entities' },
+  branch:          { icon: '⑂',   color: '#7C2D12', label: 'Branch' },
+  ifThen:          { icon: 'IF',  color: '#B45309', label: 'If / Then' },
+  transitionToTask:{ icon: '↷',   color: '#0F766E', label: 'Transition To Task' },
 }
 const ALL_ACTION_TYPES = Object.keys(ACTION_INFO).sort()
 
@@ -45,7 +48,135 @@ function makeDefaultAction(type) {
   if (type === 'sql') return { ...base, sql: 'SELECT ...', outputVariableName: 'result' }
   if (type === 'renderUI') return { ...base, inputJSON: 'myFragment', bundleNames: [], dataMap: {}, outputVariableName: 'renderUIData', singleTurn: true, unsupportedOnUI: true }
   if (type === 'createUIFragment') return { ...base, metadata: { type: 'table', columns: [] }, inputVariableName: 'data', outputVariableName: 'fragment' }
+  if (type === 'branch') return { ...base, branches: [{ name: 'Branch 1', conditions: [], requiredTags: '', exclusionTags: '', actions: [] }] }
+  if (type === 'ifThen') return { ...base, conditions: [], actionsWhenTrue: [], actionsWhenFalse: [] }
+  if (type === 'transitionToTask') return { ...base, transitionToTaskId: '' }
   return base
+}
+
+// ── Nested-action path helpers ────────────────────────────────────────
+// A path is [topIndex, key, idx, key, idx, ...] — topIndex picks the top-level action,
+// then alternating (arrayKey, index) pairs drill into branch.branches[i].actions or
+// ifThen.actionsWhenTrue/actionsWhenFalse, arbitrarily deep (branches can nest branches).
+function getActionAtPath(topActions, path) {
+  let node = topActions[path[0]]
+  for (let i = 1; i < path.length; i += 2) {
+    node = node?.[path[i]]?.[path[i + 1]]
+  }
+  return node
+}
+
+function setActionAtPath(topActions, path, updater) {
+  const newTop = topActions.map(a => ({ ...a }))
+  if (path.length === 1) {
+    newTop[path[0]] = updater(newTop[path[0]])
+    return newTop
+  }
+  const recur = (node, idx) => {
+    const key = path[idx], arrIdx = path[idx + 1]
+    const arr = [...(node[key] || [])]
+    arr[arrIdx] = idx + 2 === path.length ? updater(arr[arrIdx]) : recur(arr[arrIdx], idx + 2)
+    return { ...node, [key]: arr }
+  }
+  newTop[path[0]] = recur(newTop[path[0]], 1)
+  return newTop
+}
+
+function deleteActionAtPath(topActions, path) {
+  const newTop = topActions.map(a => ({ ...a }))
+  if (path.length === 1) {
+    newTop.splice(path[0], 1)
+    return newTop
+  }
+  const recur = (node, idx) => {
+    const key = path[idx], arrIdx = path[idx + 1]
+    const arr = [...(node[key] || [])]
+    if (idx + 2 === path.length) arr.splice(arrIdx, 1)
+    else arr[arrIdx] = recur(arr[arrIdx], idx + 2)
+    return { ...node, [key]: arr }
+  }
+  newTop[path[0]] = recur(newTop[path[0]], 1)
+  return newTop
+}
+
+// ── Recursive tree node — renders branch/ifThen/transitionToTask nesting ─────
+function FlowTreeNode({ action, path, depth, selPath, onSelect, taskKeys, onJumpToTask }) {
+  if (!action || typeof action !== 'object') return null
+  const info = ACTION_INFO[action.type] || { icon: '?', color: '#374151', label: action.type }
+  const isSelected = selPath && path.length === selPath.length && path.every((p, i) => p === selPath[i])
+  const pad = 8 + depth * 18
+
+  return (
+    <div>
+      <div
+        onClick={() => onSelect(path)}
+        style={{ paddingLeft: pad }}
+        className={`flex items-center gap-2 py-1 pr-2 cursor-pointer rounded ${isSelected ? 'bg-[#DBEAFE]' : 'hover:bg-[#F1F5F9]'}`}
+      >
+        <span className="font-mono text-[9px] font-bold rounded px-1 py-0.5 text-white shrink-0" style={{ backgroundColor: action._disabled ? '#94A3B8' : info.color }}>
+          {info.icon}
+        </span>
+        <span className="text-xs font-medium truncate" style={{ color: action._disabled ? '#94A3B8' : '#111827' }}>
+          {action.name || action.type}
+        </span>
+        <span className="text-[10px] text-[#94A3B8] shrink-0">{info.label}</span>
+        {action._disabled && <span className="text-[10px] text-red-500 font-semibold shrink-0">⊘ disconnected</span>}
+      </div>
+
+      {action.type === 'branch' && Array.isArray(action.branches) && action.branches.map((b, bi) => (
+        <div key={bi}>
+          <div style={{ paddingLeft: pad + 18 }} className="flex items-center gap-1 py-0.5 text-[10px]">
+            <span className="font-semibold text-[#7C2D12]">⑂ {b.name || `Branch ${bi + 1}`}</span>
+            {b.conditions?.length > 0 && (
+              <span className="text-[#64748B] font-mono truncate">— {b.conditions.join(' AND ')}</span>
+            )}
+          </div>
+          {(b.actions || []).length === 0 && (
+            <div style={{ paddingLeft: pad + 36 }} className="text-[10px] text-[#CBD5E1] italic py-0.5">empty</div>
+          )}
+          {(b.actions || []).map((child, ci) => (
+            <FlowTreeNode key={ci} action={child} path={[...path, 'branches', bi, 'actions', ci]}
+              depth={depth + 2} selPath={selPath} onSelect={onSelect} taskKeys={taskKeys} onJumpToTask={onJumpToTask} />
+          ))}
+        </div>
+      ))}
+
+      {action.type === 'ifThen' && (
+        <>
+          <div style={{ paddingLeft: pad + 18 }} className="text-[10px] font-semibold text-[#B45309] font-mono py-0.5 truncate">
+            IF {(action.conditions || []).join(' AND ')}
+          </div>
+          <div style={{ paddingLeft: pad + 18 }} className="text-[10px] font-bold text-green-700 py-0.5">✓ WHEN TRUE</div>
+          {(action.actionsWhenTrue || []).length === 0 && (
+            <div style={{ paddingLeft: pad + 36 }} className="text-[10px] text-[#CBD5E1] italic py-0.5">no actions</div>
+          )}
+          {(action.actionsWhenTrue || []).map((child, ci) => (
+            <FlowTreeNode key={ci} action={child} path={[...path, 'actionsWhenTrue', ci]}
+              depth={depth + 2} selPath={selPath} onSelect={onSelect} taskKeys={taskKeys} onJumpToTask={onJumpToTask} />
+          ))}
+          <div style={{ paddingLeft: pad + 18 }} className="text-[10px] font-bold text-red-700 py-0.5">✕ WHEN FALSE</div>
+          {(action.actionsWhenFalse || []).length === 0 && (
+            <div style={{ paddingLeft: pad + 36 }} className="text-[10px] text-[#CBD5E1] italic py-0.5">no actions</div>
+          )}
+          {(action.actionsWhenFalse || []).map((child, ci) => (
+            <FlowTreeNode key={ci} action={child} path={[...path, 'actionsWhenFalse', ci]}
+              depth={depth + 2} selPath={selPath} onSelect={onSelect} taskKeys={taskKeys} onJumpToTask={onJumpToTask} />
+          ))}
+        </>
+      )}
+
+      {action.type === 'transitionToTask' && action.transitionToTaskId && (
+        <div style={{ paddingLeft: pad + 18 }} className="py-0.5">
+          <button
+            onClick={e => { e.stopPropagation(); if (taskKeys.includes(action.transitionToTaskId)) onJumpToTask(action.transitionToTaskId) }}
+            className={`text-[10px] font-semibold ${taskKeys.includes(action.transitionToTaskId) ? 'text-teal-700 hover:underline' : 'text-[#94A3B8] cursor-default'}`}
+          >
+            ↷ jump to task "{action.transitionToTaskId}"{!taskKeys.includes(action.transitionToTaskId) ? ' (not found in this flow)' : ''}
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Sortable action card ─────────────────────────────────────────────
@@ -371,7 +502,10 @@ export default function FlowBuilder({
       onGleanHistoryChange?.([])
     }
   }, [flowId, taskId, onGleanChatIdChange, onGleanHistoryChange])
-  const [selIdx, setSelIdx] = useState(null)
+  const [selIdx, setSelIdxRaw] = useState(null)
+  const [selPath, setSelPath] = useState(null) // nested branch/ifThen selection — [topIdx, key, idx, ...]
+  const [viewMode, setViewMode] = useState('cards') // 'cards' | 'tree'
+  const setSelIdx = i => { setSelIdxRaw(i); setSelPath(null) }
   const [chatOpen, setChatOpen] = useState(false)
   const [modal, setModal] = useState(null) // 'picker' | 'paste' | 'edit' | 'fragment'
   const [search, setSearch] = useState('')
@@ -503,6 +637,47 @@ export default function FlowBuilder({
     const newActions = actions.filter((_, i) => i !== selIdx).map(({ _id, ...r }) => r)
     setActions(newActions)
     setSelIdx(null)
+  }
+
+  // ── Nested (tree-view) selection — a node inside a branch/ifThen's own action arrays ──
+  const nestedSel = selPath ? getActionAtPath(actions.map(({ _id, ...r }) => r), selPath) : null
+
+  const selectTreeNode = path => {
+    if (path.length === 1) { setSelIdx(path[0]); return }
+    setSelIdxRaw(null)
+    setSelPath(path)
+  }
+
+  const jumpToTask = targetTaskId => {
+    setTaskId(targetTaskId)
+    setSelIdx(null)
+  }
+
+  const deleteNestedSelected = () => {
+    if (!selPath) return
+    if (!confirm(`Delete '${nestedSel?.name || 'this action'}'?`)) return
+    const clean = actions.map(({ _id, ...r }) => r)
+    setActions(deleteActionAtPath(clean, selPath))
+    setSelPath(null)
+  }
+
+  const saveEditedNestedAction = updated => {
+    if (!selPath) return
+    const clean = actions.map(({ _id, ...r }) => r)
+    const newActions = setActionAtPath(clean, selPath, old => {
+      const internals = Object.fromEntries(Object.entries(old || {}).filter(([k]) => k.startsWith('_')))
+      return { ...updated, ...internals }
+    })
+    setActions(newActions)
+  }
+
+  const saveNestedFragment = frag => {
+    if (!selPath) return
+    const clean = actions.map(({ _id, ...r }) => r)
+    const newActions = setActionAtPath(clean, selPath, old =>
+      frag ? { ...old, _fragment_json: frag } : (({ _fragment_json, ...rest }) => rest)(old)
+    )
+    setActions(newActions)
   }
 
   const moveLeft = () => {
@@ -746,8 +921,9 @@ export default function FlowBuilder({
     }
   }
 
-  const sel = selIdx !== null ? actions[selIdx] : null
+  const sel = selPath ? nestedSel : (selIdx !== null ? actions[selIdx] : null)
   const selDisplay = sel ? Object.fromEntries(Object.entries(sel).filter(([k]) => !k.startsWith('_'))) : null
+  const handleDeleteSelected = () => (selPath ? deleteNestedSelected() : deleteSelected())
 
   return (
     <div className="flex flex-col h-full">
@@ -769,7 +945,10 @@ export default function FlowBuilder({
         <Btn label="Ask Glean" bg="#4C1D95" fg="white" onClick={() => setChatOpen(o => !o)} />
         <Btn label="+ Add Action" bg="#DBEAFE" fg="#1E3A8A" onClick={() => setModal('picker')} />
         <Btn label="Paste JSON" bg="#FEF3C7" fg="#92400E" onClick={() => setModal('paste')} />
-        <Btn label="Delete Action" bg="#FEE2E2" fg="#991B1B" onClick={deleteSelected} />
+        <Btn label="Delete Action" bg="#FEE2E2" fg="#991B1B" onClick={handleDeleteSelected} />
+        <span className="mx-2 text-[#CBD5E1]">|</span>
+        <Btn label={viewMode === 'tree' ? '📇 Cards View' : '🌳 Tree View'} bg="#F3E8FF" fg="#6B21A8"
+          onClick={() => setViewMode(v => (v === 'tree' ? 'cards' : 'tree'))} />
         <span className="mx-2 text-[#CBD5E1]">|</span>
         <input
           type="text"
@@ -798,51 +977,78 @@ export default function FlowBuilder({
         {/* Main canvas area */}
         <div className="flex flex-col flex-1 min-w-0">
           {/* Canvas */}
-          <div className="canvas-scroll bg-[#F0F4F8] border-b border-[#CBD5E1] shrink-0" style={{ height: 200 }}>
-            <div className="flex items-center gap-0 px-5 h-full">
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={actions.map(a => a._id)} strategy={horizontalListSortingStrategy}>
-                  <div className="flex items-center gap-2">
-                    {actions.map((a, i) => (
-                      <ActionCard
-                        key={a._id}
-                        id={`flow-card-${i}`}
-                        action={a}
-                        index={i}
-                        selected={selIdx === i}
-                        highlighted={searchHits.length > 0 && searchHits.includes(i) && selIdx !== i}
-                        onSelect={setSelIdx}
-                        onDoubleClick={() => setModal('edit')}
-                      />
-                    ))}
-                  </div>
-                </SortableContext>
-              </DndContext>
-              {/* Add zone */}
-              <button
-                onClick={() => setModal('picker')}
-                className="shrink-0 ml-4 w-10 h-10 rounded-full bg-[#DBEAFE] border-2 border-[#2563EB] text-[#2563EB] text-xl font-bold hover:bg-[#BFDBFE] flex items-center justify-center"
-              >
-                +
-              </button>
+          {viewMode === 'cards' ? (
+            <div className="canvas-scroll bg-[#F0F4F8] border-b border-[#CBD5E1] shrink-0" style={{ height: 200 }}>
+              <div className="flex items-center gap-0 px-5 h-full">
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={actions.map(a => a._id)} strategy={horizontalListSortingStrategy}>
+                    <div className="flex items-center gap-2">
+                      {actions.map((a, i) => (
+                        <ActionCard
+                          key={a._id}
+                          id={`flow-card-${i}`}
+                          action={a}
+                          index={i}
+                          selected={selIdx === i}
+                          highlighted={searchHits.length > 0 && searchHits.includes(i) && selIdx !== i}
+                          onSelect={setSelIdx}
+                          onDoubleClick={() => setModal('edit')}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+                {/* Add zone */}
+                <button
+                  onClick={() => setModal('picker')}
+                  className="shrink-0 ml-4 w-10 h-10 rounded-full bg-[#DBEAFE] border-2 border-[#2563EB] text-[#2563EB] text-xl font-bold hover:bg-[#BFDBFE] flex items-center justify-center"
+                >
+                  +
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="bg-[#F8FAFC] border-b border-[#CBD5E1] shrink-0 overflow-y-auto px-3 py-2" style={{ height: 320 }}>
+              <p className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-wider mb-1">
+                Flow Tree — {taskId} ({actions.length} top-level action{actions.length !== 1 ? 's' : ''})
+              </p>
+              {actions.length === 0 && <p className="text-xs text-[#94A3B8] italic px-2">No actions in this task.</p>}
+              {actions.map((a, i) => (
+                <FlowTreeNode
+                  key={a._id}
+                  action={a}
+                  path={[i]}
+                  depth={0}
+                  selPath={selPath ? selPath : (selIdx !== null ? [selIdx] : null)}
+                  onSelect={selectTreeNode}
+                  taskKeys={taskKeys}
+                  onJumpToTask={jumpToTask}
+                />
+              ))}
+            </div>
+          )}
 
           {/* Detail header */}
           <div className="bg-[#1E3A8A] px-4 py-2 flex items-center gap-3 shrink-0">
             <span className="text-white text-sm font-semibold">Action Detail</span>
             <span className="text-[#93C5FD] text-xs">
-              {sel ? `[${selIdx + 1}/${actions.length}]  ${sel.name || sel.type}  (${sel.type})` : 'Click a card to select'}
+              {sel
+                ? (selPath ? `nested — ${sel.name || sel.type}  (${sel.type})` : `[${selIdx + 1}/${actions.length}]  ${sel.name || sel.type}  (${sel.type})`)
+                : 'Click a card to select'}
             </span>
             <div className="ml-auto flex gap-2">
-              <SmBtn label="< Left" onClick={moveLeft} />
-              <SmBtn label="Right >" onClick={moveRight} />
-              <SmBtn label="Move To…" onClick={moveTo} />
+              {!selPath && (
+                <>
+                  <SmBtn label="< Left" onClick={moveLeft} />
+                  <SmBtn label="Right >" onClick={moveRight} />
+                  <SmBtn label="Move To…" onClick={moveTo} />
+                </>
+              )}
               {sel && (
                 <>
-                  <SmBtn label={sel._disabled ? 'Re-connect' : 'Disconnect'} onClick={toggleDisconnect} red />
+                  {!selPath && <SmBtn label={sel._disabled ? 'Re-connect' : 'Disconnect'} onClick={toggleDisconnect} red />}
                   <SmBtn label="Edit JSON" onClick={() => setModal('edit')} />
-                  <SmBtn label="Delete" onClick={deleteSelected} red />
+                  <SmBtn label="Delete" onClick={handleDeleteSelected} red />
                   {sel.type === 'renderUI' && (
                     <>
                       <SmBtn label="Design Fragment" onClick={() => setModal('fragment')} amber />
@@ -895,8 +1101,8 @@ export default function FlowBuilder({
       {/* Modals */}
       {modal === 'picker' && <ActionTypePicker onAdd={addAction} onClose={() => setModal(null)} onCustom={() => setModal('paste')} />}
       {modal === 'paste' && <PasteJsonModal onInsert={insertActions} onClose={() => setModal(null)} />}
-      {modal === 'edit' && sel && <EditActionModal action={sel} onSave={saveEditedAction} onClose={() => setModal(null)} />}
-      {modal === 'fragment' && sel && <FragmentModal action={sel} onSave={saveFragment} onClose={() => setModal(null)} />}
+      {modal === 'edit' && sel && <EditActionModal action={sel} onSave={selPath ? saveEditedNestedAction : saveEditedAction} onClose={() => setModal(null)} />}
+      {modal === 'fragment' && sel && <FragmentModal action={sel} onSave={selPath ? saveNestedFragment : saveFragment} onClose={() => setModal(null)} />}
     </div>
   )
 }
