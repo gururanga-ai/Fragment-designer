@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ELEMENT_LABELS, COMP_COLORS, COMP_ICONS } from '../../utils/fragmentData'
 import JsonEditor from '../shared/JsonEditor'
 import Modal from '../shared/Modal'
+import GleanChat from '../shared/GleanChat'
 import { SlotFilterEditor } from './FilterPanel'
 
 // ── ELEM_SCHEMAS — mirrors Python ELEM_SCHEMAS ──────────────────────────────
@@ -295,8 +296,12 @@ function setStyVal(sty, key, val) {
 }
 
 // ── Main PropertyPanel ──────────────────────────────────────────────────────
-export default function PropertyPanel({ fragment, selectedPath, onChange, onDelete, varPool = {}, varSchemas = {} }) {
+export default function PropertyPanel({
+  fragment, selectedPath, onChange, onDelete, varPool = {}, varSchemas = {},
+  gleanHistory, onGleanHistoryChange, onGleanActionBar,
+}) {
   const [tab, setTab] = useState('config')
+  const [assistOpen, setAssistOpen] = useState(false)
 
   const node = getNodeAtPath(fragment, selectedPath)
   const type = node?.Container || node?.Element || null
@@ -304,17 +309,48 @@ export default function PropertyPanel({ fragment, selectedPath, onChange, onDele
   const icon = COMP_ICONS[type] || '□'
   const label = type ? (ELEMENT_LABELS[type] || type) : null
 
+  // Shared AI-assist panel — scoped to whatever selectedPath currently points at (a specific
+  // node, or the whole fragment when nothing is selected). GleanChat derives the selected-node
+  // context itself from fragmentJson + selectedPath, so opening it here instead of via the
+  // toolbar's whole-panel chat automatically narrows suggestions to this section.
+  const assistPanel = assistOpen && (
+    <div className="shrink-0 border-t border-[#CBD5E1]" style={{ height: 360 }}>
+      <GleanChat
+        mode="agent"
+        history={gleanHistory}
+        onHistoryChange={onGleanHistoryChange}
+        onActionBar={onGleanActionBar}
+        title={label ? `AI Assist — ${label}` : 'AI Assist — Fragment'}
+        fragmentJson={fragment}
+        selectedPath={selectedPath}
+        varPool={varPool}
+        className="h-full"
+      />
+    </div>
+  )
+
   if (!node || selectedPath.length === 0) {
     return (
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="text-center text-[#94A3B8] mt-8">
-          <p className="text-4xl mb-2">☝️</p>
-          <p className="text-sm">Click any element on the canvas to edit its properties.</p>
+      <div className="flex flex-col h-full">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4">
+          <div className="text-center text-[#94A3B8] mt-8">
+            <p className="text-4xl mb-2">☝️</p>
+            <p className="text-sm">Click any element on the canvas to edit its properties.</p>
+          </div>
+          <div className="mt-4 flex justify-center">
+            <button
+              onClick={() => setAssistOpen(o => !o)}
+              className={`text-xs px-3 py-1.5 rounded-full font-semibold border ${assistOpen ? 'bg-[#7C3AED] text-white border-[#7C3AED]' : 'bg-white text-[#7C3AED] border-[#DDD6FE] hover:bg-[#F3E8FF]'}`}
+            >
+              ✨ Ask Glean about this fragment
+            </button>
+          </div>
+          <div className="mt-6">
+            <p className="text-xs font-semibold text-[#374151] mb-2">Root Fragment JSON</p>
+            <JsonEditor value={fragment} onChange={newVal => onChange(newVal)} height="300px" />
+          </div>
         </div>
-        <div className="mt-6">
-          <p className="text-xs font-semibold text-[#374151] mb-2">Root Fragment JSON</p>
-          <JsonEditor value={fragment} onChange={newVal => onChange(newVal)} height="300px" />
-        </div>
+        {assistPanel}
       </div>
     )
   }
@@ -372,6 +408,13 @@ export default function PropertyPanel({ fragment, selectedPath, onChange, onDele
           <p className="text-xs font-semibold truncate" style={{ color }}>{label}</p>
           <p className="text-xs text-[#94A3B8]">{node.Container ? 'Container' : 'Element'}</p>
         </div>
+        <button
+          onClick={() => setAssistOpen(o => !o)}
+          title="Ask Glean about this section"
+          className={`text-xs px-2 py-0.5 rounded font-semibold border shrink-0 ${assistOpen ? 'bg-[#7C3AED] text-white border-[#7C3AED]' : 'bg-white text-[#7C3AED] border-[#DDD6FE] hover:bg-[#F3E8FF]'}`}
+        >
+          ✨ AI
+        </button>
         <button onClick={onDelete} className="text-xs px-2 py-0.5 bg-[#FEE2E2] text-[#991B1B] rounded hover:bg-red-200">Delete</button>
       </div>
 
@@ -386,7 +429,7 @@ export default function PropertyPanel({ fragment, selectedPath, onChange, onDele
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
         {tab === 'config' && (
           <>
             {/* Schema description */}
@@ -581,6 +624,7 @@ export default function PropertyPanel({ fragment, selectedPath, onChange, onDele
           </div>
         )}
       </div>
+      {assistPanel}
     </div>
   )
 }

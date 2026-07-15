@@ -805,6 +805,9 @@ export default function FragmentDesigner({ varPool, setVarPool, varSchemas = {},
                 updateFragment(frag)
                 setSelectedPath([])
               }}
+              gleanHistory={gleanHistory}
+              onGleanHistoryChange={setGleanHistory}
+              onGleanActionBar={handleGleanActionBar}
             />
           )}
         </div>
