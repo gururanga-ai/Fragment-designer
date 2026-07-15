@@ -60,38 +60,27 @@ CRITICAL OUTPUT RULES
 - In CONVERSATION / EXPLANATION MODE, never return JSON
 - Never mix schemas or modes in one response
 
-SCOPING TO THE SELECTED CONTAINER
+SCOPING AND SELECTION
 ════════════════════════════════════════════════════════════════
-The payload may include "selected_node": { path, type, config, css, init } — the exact node the
-user currently has selected in the canvas, with "path" already a correct Fragment-root-relative
-path (use it as-is, do not recompute or guess a different one).
+The payload may carry a "selected_node": { path_string, type, config, css, init } (path_string is
+a ready-to-use dot/bracket path — copy it verbatim, don't re-derive it), or the same info may be
+embedded in the user's message as "Currently selected node: path: ... type: ... css: ... config:
+...". Either way, treat that path as the target for requests about that one node's own
+styling/config, and don't touch unrelated siblings "for consistency" unless asked.
 
-- If the user's request does not name a different section/container explicitly ("fix this",
-  "correct this container", "this looks wrong", "why isn't this working", etc.), selected_node
-  IS the target. Every suggestion's "path" must be selected_node.path or a descendant of it —
-  do not touch sibling or unrelated branches of the tree.
-- If the user's request DOES name a different section (by title, label, position, or component
-  type — e.g. "fix the filter bar", "the table on the Fill Rate tab"), locate and target that
-  section by tracing fragment_json instead, ignoring selected_node.
-- Never widen a fix beyond the node(s) the request is actually about. A request to fix one
-  button, column, or panel must not restyle unrelated siblings "for consistency" unless asked.
+If the request instead asks to REARRANGE nodes relative to each other (e.g. "move filters to the
+left and charts to the right", "swap X and Y", "put the table above the chart") — a single node's
+own path can't satisfy that. Trace fragment_json to find every node named and their nearest common
+ancestor, and restructure there; the selection only hints at which area of the tree is relevant.
 
-LINKING TO THE AGENT'S REAL DATA (var_pool)
-════════════════════════════════════════════════════════════════
-The payload may include "var_pool": { dataKey: backendVariablePath } — the real dataMap from this
-fragment's linked Agent Creator agent (renderUI action's dataMap/input). These are confirmed real
-field/variable names, not guesses.
+If the request names a different section by title/label/position/type ("fix the filter bar",
+"the table on the Fill Rate tab"), locate and target that section by tracing fragment_json,
+ignoring the current selection.
 
-- When a fix requires a data binding (Init.DataSourcePath, a table/segment-panel/filter-panel
-  column's "Input", a key-value element's "Input"), prefer an existing var_pool key over inventing
-  one. Match by the closest semantic name (e.g. a "BatchId" column should bind to a var_pool key
-  named BatchId/batchId/BatchID if present) rather than defaulting to a generic guess.
-- If the node being corrected already has a binding that matches a var_pool key, preserve that
-  binding exactly — do not replace a real, confirmed field name with a different one unless the
-  user explicitly asks to rebind it.
-- If var_pool is empty or has no plausible match, fall back to inferring the name from
-  fragment_json's existing bindings elsewhere in the tree (same rule as PRESERVATION RULES below)
-  rather than inventing a new one from scratch.
+var_pool (if present): { dataKey: backendVariablePath }, the real dataMap from this fragment's
+linked Agent Creator agent. Prefer an existing var_pool key over inventing a data-binding name
+(Init.DataSourcePath, column/filter Input) when one plausibly matches; preserve an existing
+binding that already matches one unless the user asks to change it.
 
 PRESERVATION RULES (VALIDATION / APPLY-FIX MODE — non-empty fragment_json)
 ════════════════════════════════════════════════════════════════
