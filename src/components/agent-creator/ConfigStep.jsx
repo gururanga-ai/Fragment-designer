@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import GleanChat from '../shared/GleanChat'
 import Modal from '../shared/Modal'
 import { gleanChat, gleanRunWorkflow } from '../../utils/gleanApi'
@@ -56,6 +56,25 @@ export default function ConfigStep({
   const [chatOpen, setChatOpen] = useState(false)
   const [autofillOpen, setAutofillOpen] = useState(false)
   const [autofillStatus, setAutofillStatus] = useState('')
+
+  // The agent won't load on the real platform without both /agents/dataInsights/<agentId> and
+  // /ext/agents/<agentId> present in agentRootResourceFolders — confirmed against a real working
+  // agent export. Relying on Glean to remember to include both (via the Root Folders quick-fill
+  // or Full Autofill) is unreliable, so guarantee them here whenever agentId changes: add whatever
+  // canonical paths are missing, drop stale ones left over from a previous agentId, and leave any
+  // other custom folder entries the user added alone.
+  useEffect(() => {
+    const id = (config.agentId || '').trim()
+    if (!id) return
+    const canonical = [`/agents/dataInsights/${id}`, `/ext/agents/${id}`]
+    onConfigChange(prev => {
+      const current = prev.folders || []
+      const stale = current.filter(f => /^\/agents\/dataInsights\/|^\/ext\/agents\//.test(f) && !canonical.includes(f))
+      const missing = canonical.filter(c => !current.includes(c))
+      if (stale.length === 0 && missing.length === 0) return prev
+      return { ...prev, folders: [...current.filter(f => !stale.includes(f)), ...missing] }
+    })
+  }, [config.agentId, onConfigChange])
 
   const set = (key, val) => onConfigChange(prev => ({ ...prev, [key]: val }))
 

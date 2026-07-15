@@ -25,7 +25,10 @@ const DEFAULT_CONFIG = {
   allowSubagentTransition: true,
   resourceId: '',
   agentSequence: '0',
-  folders: ['/agents/dataInsights/ext-newAgent'],
+  // Left empty rather than a static 'ext-newAgent' placeholder — the real required paths depend
+  // on the actual agentId (both /agents/dataInsights/<id> and /ext/agents/<id> are needed for the
+  // agent to load on the platform) and are auto-derived once agentId is set (see ConfigStep.jsx).
+  folders: [],
   defaults: {
     DefaultMetric: 'Units',
     DefaultGroupBy1: '',
