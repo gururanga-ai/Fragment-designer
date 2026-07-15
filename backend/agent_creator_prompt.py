@@ -160,7 +160,7 @@ CONFIG MODE SHAPE
   "agentName": "Some Agent",
   "description": "Short useful description",
   "category": ["ActiveWarehouse"],
-  "agentRootResourceFolders": ["/agents/dataInsights/ext-someAgent"],
+  "agentRootResourceFolders": ["/agents/dataInsights/ext-someAgent", "/ext/agents/ext-someAgent"],
   "defaults": {
     "DefaultMetric": "Units",
     "DefaultGroupBy1": "",
@@ -174,7 +174,7 @@ CONFIG MODE RULES
 - Return only the object
 - Prefer agentId in ext-... format
 - Prefer category as an array of strings
-- Prefer agentRootResourceFolders as an array of strings
+- agentRootResourceFolders MUST include BOTH "/agents/dataInsights/<agentId>" AND "/ext/agents/<agentId>" — the agent will not load on the platform if either is missing (confirmed against real working agent exports)
 - Put all default config key-values inside defaults
 - Use concise, production-style values
 - If the user gives partial info, fill what is reasonable and omit what is unknown rather than inventing many fields
@@ -296,7 +296,6 @@ GENERAL FLOW ACTION RULES
 - Generate actions in execution order
 - Include only the actions required for the requested behavior
 - Every action object must be valid and practical
-- Prefer including input and output as objects for consistency
 - Use description as the only place for human-readable implementation comments
 - Keep descriptions short, clear, and useful
 - Reuse variable names consistently
@@ -315,9 +314,174 @@ GENERAL FLOW ACTION RULES
   7. UI render/modify
   8. final response
 
+TEMPLATE PLACEHOLDER SYNTAX
+────────────────────────────────────────────────────────────
+The platform's placeholder syntax is {:VariableName} — single brace-colon. NEVER use {{mustache}}
+or any other templating style; it does not exist on this platform and will not resolve.
+
+- {:VariableName} — substitutes a workflow variable
+- {:Filters.MetricDate.0} — dotted path into a nested variable, array index by position
+- {:Filters.MetricDate.0(format=substring,start=0,end=10)} — format modifier (substring, sqlInClause, etc.)
+- {:Filters.ReportingOrderType(format=sqlInClause)} — turns an array into a SQL-safe IN(...) list
+- {:config::DefaultMetric} — references a key from the agent's own "defaults" map (note the double colon)
+- object::variableName — references a stored variable/table object directly (used as an action's
+  "value", inside "params", in a renderUI dataMap, etc.) — distinct from the {:...} string-interpolation
+  syntax; object:: is for passing the object itself, not interpolating it into a string
+
+ACTION JSON SHAPE — READ THIS BEFORE GENERATING ANY ACTION
+────────────────────────────────────────────────────────────
+Every action object MUST include "type", "name", "description", "input", and "output" — but for
+almost every action type, "input" and "output" are EMPTY placeholder objects: {} and {}. The real
+data does NOT go inside them. It goes in type-specific TOP-LEVEL SIBLING fields, alongside the
+empty input/output stubs. Putting real fields inside "input"/"output" (e.g. "input": {"batchId":
+""}, "output": {"result": "result"}) is WRONG and produces an agent that fails to load — this is
+the single most common mistake, avoid it.
+
+The only two action types where "input"/"output" carry real content are callService (input holds
+the request shape, output holds response-extraction config) and storeResponse (output holds
+response-shaping config) — see their schemas below.
+
+PER-ACTION-TYPE SCHEMAS (exact field names — evidenced from real working agent exports)
+────────────────────────────────────────────────────────────
+
+setValue — assigns a literal, template, or object reference to a variable
+{
+  "type": "setValue", "name": "setDefaultTimeBucket", "input": {}, "output": {},
+  "description": "...",
+  "functionName": "assignValue",
+  "value": "{:config::DefaultTimeBucket}",
+  "conditions": ["TimeBucket==null,Filters.TimeBucket==null"],
+  "outputVariableName": "TimeBucket"
+}
+- value can be a literal string/array/object, a {:...} template, or "object::someVar" to copy another variable
+- conditions is optional — array of "field==value" / "field!=value" clauses, comma-separated = AND
+- requiredTags / substituteMapListValues / allowedPostFailure are optional flags used in some cases
+
+stringBuilder — assembles a SQL WHERE-clause fragment (or similar string) from conditional pieces
+{
+  "type": "stringBuilder", "name": "buildOrderFillRateSearchQuery", "input": {}, "output": {},
+  "description": "...",
+  "conditionalStrings": [
+    { "stringExpression": "AND DATE(AGGREGATION_DATE) >= '{:MetricDateFrom}' ", "conditions": ["MetricDateFrom!=null"] }
+  ],
+  "outputVariableName": "orderFillRateWhereClause"
+}
+
+sql — executes a query
+{
+  "type": "sql", "name": "getOrderFillRateData", "input": {}, "output": {},
+  "description": "...",
+  "sql": "SELECT DATE_FORMAT(AGGREGATION_DATE, '%Y-%m-%d') AS MetricDate, ... FROM {:dbprefix}_agg_sc.SOME_TABLE",
+  "where": " WHERE ORG_ID = '{:orgId}' AND FACILITY_ID = '{:nodeId}' {:orderFillRateWhereClause}",
+  "outputVariableName": "orderFillRateTable",
+  "limit": "LIMIT {:config::sql.limit}"
+}
+- "sql" and "where" are separate top-level fields, not one combined string
+- {:orgId} / {:nodeId} / {:dbprefix} are ambient context variables, always available
+
+callService — the ONE type where input/output are genuinely populated
+{
+  "type": "callService", "name": "Call API - Ticket Type Search",
+  "input": {
+    "local": true, "httpMethod": "POST", "component": "component-composer",
+    "url": "http://COM-MANH-CP-COMPOSER/api/composer/ticketType/search",
+    "relativePath": "/api/composer/ticketType/search",
+    "inputDocument": "{\\"Size\\": 1000, \\"Query\\": \\"...\\"}",
+    "httpHeaders": { "IsLocalized": "true" }
+  },
+  "output": {
+    "responseObjectType": "text", "responseObjectFormat": "json", "jsonRootElementType": "map",
+    "singleTurn": true, "storeResponse": true, "extractFromAttribute": "data",
+    "outputVariableName": "someTable",
+    "extractionRuleIntoTable": { "allFields": true, "outputVariableName": "someTable" }
+  },
+  "description": "..."
+}
+- inputDocument is a JSON string (escaped), not a nested object
+
+transformTable / editTable / joinTables — table shaping
+{
+  "type": "transformTable", "name": "buildPrimaryGridTable", "input": {}, "output": {},
+  "description": "...",
+  "functionName": "summarize",
+  "primaryTableName": "orderFillRateTable",
+  "conditionalFields": [
+    { "field": { "sourceFieldName": "WeekStart", "targetFieldName": "DisplayDate", "operation": "groupBy" }, "conditions": ["TimeBucket==Weekly"] },
+    { "field": { "sourceFieldName": "ShippedQuantity", "targetFieldName": "Units", "operation": "sum" } }
+  ],
+  "outputVariableName": "primaryGridTable"
+}
+- transformTable also supports functionName "filter" (rowFilterExpression) or plain "fields" instead of "conditionalFields" when there's no conditional logic
+- editTable uses functionName "enrich" (enrichmentExpression: {field: "java expression"}) or "dropColumns" (columnNames: [...])
+- joinTables uses functionName "lookup" with primaryTableName/secondaryTableName/joinColumns/secondaryTableColumnNames
+
+addTags — conditionally tag the workflow for later requiredTags checks
+{ "type": "addTags", "name": "addDefaultGroupByTag", "input": {}, "output": {}, "description": "...",
+  "conditions": ["GroupBy==null,GroupBy.size[]<=0"], "tags": "defaultGroupBy" }
+
+profileLookup — loads a profile/context by purpose id
+{ "type": "profileLookup", "name": "profileLookup", "input": {}, "output": {}, "description": "...",
+  "profilePurposeId": "dci::locationConfig", "outputVariableName": "locationProfileId" }
+
+callAgent — calls another agent as a sub-call
+{
+  "type": "callAgent", "name": "obe-ticketsAgent", "input": {}, "output": {},
+  "description": "...", "outputVariableName": "someData",
+  "userQuery": "Get ticket type details", "intentId": "ticketTypeDetails",
+  "params": { "TicketTypeId": "object::someTable(format=listOfObject,columnNames=TicketTypeId)" },
+  "paramsMapVariableName": "params", "responseStorageStrategy": "json", "responseObjectFormat": "json",
+  "storeResponse": true, "jsonRootElementType": "map", "addResponseToOutput": false,
+  "conditions": ["someTable.size[]>0"]
+}
+
+storeResponse — the other type where output carries real config
+{
+  "type": "storeResponse", "name": "storeFillRateTicketTypeResponse", "input": {},
+  "output": { "responseObjectFormat": "json", "jsonRootElementType": "list", "singleTurn": true,
+    "extractionRuleIntoTable": { "allFields": true, "outputVariableName": "someTable" } },
+  "uiType": "transformListIntoTable",
+  "inputVariableName": "object::someData.DataResponse.ticketTypeDetails",
+  "conditions": ["someData.DataResponse.ticketTypeDetails.size[]>0"]
+}
+
+userExit — extension point hook, e.g. to let the UI layer augment a rendered fragment
+{ "type": "userExit", "name": "userExit", "input": {}, "output": {}, "description": "...",
+  "agentExtensionPointId": "augmentFragment", "inputVariableName": "renderUIData", "outputVariableName": "renderUIData" }
+
+addStreamResponse — streams an interim status message to the chat while work continues
+{ "type": "addStreamResponse", "name": "streamInit", "input": {}, "output": {},
+  "description": "...", "message": "Loading data..." }
+
+renderUI — renders a Fragment UI. NEVER embed the fragment definition inline in this action.
+{
+  "type": "renderUI", "name": "renderFillRateAnalyzer", "input": {}, "output": {},
+  "description": "...",
+  "inputJSON": "fillRateAnalyzerFragment",
+  "dataMap": {
+    "PrimaryData": "object::primaryGridTable(format=listOfMap)",
+    "MetricMode": "object::MetricMode"
+  },
+  "outputVariableName": "renderUIData"
+}
+- inputJSON is the exact Name of an agentContentsCustom item with AgentContentType "inputs" whose
+  Content is the actual fragment JSON ({"Fragment": {"Container": ..., ...}}) — the fragment lives
+  as a separate content item, referenced by name, never written inline into the action itself
+- dataMap maps keys the fragment reads (via its own {:KeyName} bindings) to workflow variables —
+  "object::tableVar(format=listOfMap)" for tables, "object::var" for scalars/objects
+- if the flow needs a NEW fragment that doesn't exist yet, describe it via FRAGMENT MODE (a separate
+  response) rather than inventing ad hoc fragment JSON inside this action
+
+addDataResponse — returns a value to the caller/chat response
+{ "type": "addDataResponse", "name": "returnFragment", "input": {}, "output": {}, "description": "...",
+  "key": "FragmentView", "value": "object::renderUIData", "populateToParent": true }
+- key/value are flat top-level fields, not nested in input/output
+- for a rendered fragment specifically, key is conventionally "FragmentView" and value is "object::<renderUI's outputVariableName>"
+
 COMMON ACTION TYPES TO USE
 ────────────────────────────────────────────────────────────
-Use these when appropriate:
+Use these when appropriate (see PER-ACTION-TYPE SCHEMAS above for the ones with real-world
+examples — for any type not listed there, still include empty "input": {} / "output": {} plus
+whatever type-specific top-level fields are needed, following the same pattern):
 - setValue
 - stringBuilder
 - sql
@@ -340,17 +504,6 @@ Use these when appropriate:
 - callFlow
 - addMessage
 - extractEntities
-
-ACTION JSON REQUIRED FIELDS
-────────────────────────────────────────────────────────────
-Every action object MUST include:
-- "type"
-- "name"
-- "description"
-- "input"
-- "output"
-
-Do not omit them even for simple actions.
 
 SQL RULES
 ────────────────────────────────────────────────────────────

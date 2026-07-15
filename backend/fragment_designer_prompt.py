@@ -155,10 +155,37 @@ stack — detail/flyout host container:
 
 actions-popover — dropdown button container
 
+table — data table CONTAINER (not an element — confirmed from real working fragments):
+  Init: { "Type": "value-array", "DataSourcePath": "<key bound via {:KeyName} in the parent's Init.DefaultValues>" }
+  Config.Columns (capital C) is an array — each column is its OWN object, never a plain {field,title}/{Header,Accessor} pair:
+    {
+      "UID": "ColBatchId",
+      "Config": {
+        "LabelKey": "Batch ID",
+        "Sort": { "SortBy": "BatchId", "Sortable": true },
+        "Filter": { "Filterable": true }
+      },
+      "Slots": {
+        "Default": [
+          { "Element": "key-value", "Input": "BatchId", "Config": {} }
+        ]
+      }
+    }
+  - For a column with a percentage/suffix value: Slots.Default[0].Config.postValueSeparator = "%"
+  - For an action/icon column (e.g. an insights button), Slots.Default[0].Element is "action-button" instead of "key-value"
+  - Config.PaginationConfig = { "Paginate": true, "Size": [10,25,50,100], "Slot": "footer" } for pagination
+  - Config.ShowFilter / Config.showExportButton — optional top-level table toggles
+  - Never use "columns" (lowercase), "field"/"title", or "Header"/"Accessor" — those are not this
+    platform's schema and will not render
+
+chart — data chart CONTAINER (not an element):
+  Init: { "Type": "value-array", "DataSourcePath": "<key>" }
+  Config.chartMetadata: { showChartHeader, showChartTitle, showLegend, backgroundColor, ... }
+  Config.highchartsOptions: real Highcharts config (chart/title/xAxis/yAxis/tooltip/legend/plotOptions)
+  Config.dataMapping.seriesMappings: array of { seriesType, sourceDataPath, fieldMappings: {sourceField: "name"|"y"}, staticOptions: {name, color, yAxis} }
+
 ELEMENT TYPES AND THEIR REQUIRED CONFIG
 
-table — data table
-chart — data chart
 kpi-card — KPI metric display
 text — static or dynamic text
 filter-panel — filter sidebar panel
@@ -166,7 +193,7 @@ button — action button
 badge — status or count badge
 segment-panel — segmented control
 action-button — clickable icon/button element
-key-value — bound field renderer
+key-value — bound field renderer; Input is the field name on the row, e.g. { "Element": "key-value", "Input": "Status", "Config": {} } — this is how EVERY table column's Slots.Default entry renders its bound value, there is no separate "text"-with-a-value-binding pattern for table cells
 link — link/navigation element
 
 GENERATION MODE RULES
