@@ -244,7 +244,18 @@ PLAIN ARRAY WITHOUT FLAGS:
 - Allowed only when generating a fresh flow for a new agent or when no existing flow context exists
 - Do not use plain full-array replacement for a small modification request
 
-RULE #3 — NEVER DO THESE
+RULE #3 — COMPLETE THE DEPENDENCY CHAIN
+If a modified or added action references a new {:variableName} (e.g. a WHERE-clause placeholder,
+a mapped filter variable, a computed date) that is NOT already produced by an existing action's
+outputVariableName in the current context, you MUST also emit the add action(s) that define it —
+in the SAME response, not a later turn. Trace every new {:...} reference back to the action that
+sets it; if that action doesn't exist yet, create it (setValue/stringBuilder/etc. as appropriate)
+and position it correctly with AfterActionField so it runs before the action that consumes it.
+Never leave a dangling reference to a variable nothing produces — a filter/query fix that adds
+"{:xWhereClause}" to a SQL action's WHERE but doesn't also add the stringBuilder (and any setValue
+actions it depends on) that builds "xWhereClause" is an incomplete fix, not a correct one.
+
+RULE #4 — NEVER DO THESE
 - Do not return the full flow when only changing 1–2 actions
 - Do not include unchanged actions alongside _action items
 - Do not invent new action names when modifying

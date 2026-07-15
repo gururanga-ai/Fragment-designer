@@ -309,12 +309,21 @@ def _build_chat_body(req: ChatRequest) -> dict[str, Any]:
                 "messageType": "CONTENT",
                 "ts": now,
             })
+    # Include the assistant's OWN prior replies (not just user turns) — a question that refers
+    # back to something Glean itself said last turn (e.g. "what is operation: asIs?" after Glean
+    # returned action JSON containing that field) is unanswerable if that reply was stripped from
+    # the replay; the model then has nothing to anchor the question to and falls back to whatever
+    # mode the static context makes likeliest (usually re-continuing the fix instead of answering).
     for msg in req.conversation:
-        if msg.role != "user":
+        if msg.role == "user":
+            author = "USER"
+        elif msg.role in ("ai", "assistant"):
+            author = "CHATBOT"
+        else:
             continue
         messages.append({
             "agentConfig": {"agent": "FAST"},
-            "author": "USER",
+            "author": author,
             "fragments": [{"text": msg.text}],
             "messageType": "CONTENT",
             "ts": now,
