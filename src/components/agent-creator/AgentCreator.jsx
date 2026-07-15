@@ -6,6 +6,13 @@ import ContentsManager from './ContentsManager'
 import ExtensionBanner from '../shared/ExtensionBanner'
 import { buildAgentJson, parseAgentJson } from '../../utils/agentBuilder'
 
+// Read by ErrorBoundary's crash screen (see App.jsx backupKey prop) — since ErrorBoundary's
+// "Reset" force-remounts this component and wipes all its React state, this is the only thing
+// standing between a crash and losing unsaved work. Written after every successful render, so it
+// always holds the last state that DIDN'T crash — not necessarily the very last edit (the render
+// that crashes never gets to commit its effects), but everything up to it.
+export const AGENT_CREATOR_BACKUP_KEY = 'mawm_agent_creator_backup'
+
 const DEFAULT_CONFIG = {
   agentId: '',
   agentName: '',
@@ -115,6 +122,15 @@ export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHa
   const [gleanChatId, setGleanChatId] = useState(null)
   const [showContents, setShowContents] = useState(false)
   const [pasteModalOpen, setPasteModalOpen] = useState(false)
+
+  // Back up state to localStorage on every successful render so a crash never loses work that
+  // already got this far — see AGENT_CREATOR_BACKUP_KEY comment above and ErrorBoundary's crash
+  // screen in App.jsx, which reads this key to offer copy/download before "Reset" wipes state.
+  useEffect(() => {
+    try {
+      localStorage.setItem(AGENT_CREATOR_BACKUP_KEY, JSON.stringify({ config, flows, contents, savedAt: Date.now() }))
+    } catch { /* localStorage unavailable/full — backup is best-effort, never block the app on it */ }
+  }, [config, flows, contents])
 
   // Listen for fragment-saved-to-agent events from FragmentDesigner
   useEffect(() => {

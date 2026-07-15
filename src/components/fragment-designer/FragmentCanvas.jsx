@@ -192,11 +192,15 @@ export function HtmlNodeRenderer({ node, path = [], selectedPath = [], onSelect 
         <div style={{ display: 'flex', borderBottom: '1px solid #E2E8F0', backgroundColor: '#F8FAFC', overflowX: 'auto', flexShrink: 0 }}>
           {orderedKeys.map(key => {
             const tDef = tabsDef.find(t => t.Name === key)
+            // See getTabLabel in TabGroupPreview below for why this guards against LabelKey
+            // being an object instead of a string — same crash, same fix, different component.
+            const rawLabel = tDef?.LabelKey
+            const tabLabel = (rawLabel && typeof rawLabel === 'object') ? key : (rawLabel || key)
             return (
               <button key={key}
                 onClick={e => { e.stopPropagation(); setActiveTab(key) }}
                 style={{ padding: '5px 14px', fontSize: 11, fontWeight: 500, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', outline: 'none', borderBottom: curTab === key ? '2px solid #2563EB' : '2px solid transparent', backgroundColor: curTab === key ? 'white' : 'transparent', color: curTab === key ? '#1E3A8A' : '#64748B' }}>
-                {tDef?.LabelKey || key}
+                {tabLabel}
               </button>
             )
           })}
@@ -857,7 +861,11 @@ function TabGroupPreview({ node, path, selectedPath, onSelect, onChange, depth }
 
   const getTabLabel = key => {
     const def = tabsDef.find(t => t.Name === key)
-    return def?.LabelKey || key
+    // A tab's LabelKey is meant to be a plain string, but malformed/foreign JSON can put a whole
+    // nested object there instead — rendering that directly as JSX children crashes the canvas
+    // with "Objects are not valid as a React child", taking down the whole editor with it.
+    const label = def?.LabelKey
+    return (label && typeof label === 'object') ? key : (label || key)
   }
 
   const children = slots[activeTab] || []

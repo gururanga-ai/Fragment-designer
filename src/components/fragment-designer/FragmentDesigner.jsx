@@ -18,6 +18,11 @@ const EMPTY_FRAGMENT = {
   },
 }
 
+// Read by ErrorBoundary's crash screen (see App.jsx backupKey prop) — ErrorBoundary's "Reset"
+// force-remounts this component and wipes all its React state, so this is the only thing standing
+// between a crash and losing unsaved fragment work. Written after every successful render.
+export const FRAGMENT_DESIGNER_BACKUP_KEY = 'mawm_fragment_designer_backup'
+
 function cleanJson(str) {
   // Strip BOM + invisible/zero-width Unicode chars
   str = str.replace(/[﻿​‌‍‎‏￾]/g, '').trim()
@@ -440,6 +445,15 @@ export default function FragmentDesigner({ varPool, setVarPool, varSchemas = {},
   const [pasteModalOpen, setPasteModalOpen] = useState(false)
   const [wrapFlyout, setWrapFlyout] = useState(false)
   const [sidebarRightSlot, setSidebarRightSlot] = useState([])
+
+  // Back up state to localStorage on every successful render so a crash never loses work that
+  // already got this far — see FRAGMENT_DESIGNER_BACKUP_KEY comment above and ErrorBoundary's
+  // crash screen in App.jsx, which reads this key to offer copy/download before "Reset" wipes state.
+  useEffect(() => {
+    try {
+      localStorage.setItem(FRAGMENT_DESIGNER_BACKUP_KEY, JSON.stringify({ fragment, fragmentName, savedAt: Date.now() }))
+    } catch { /* localStorage unavailable/full — backup is best-effort, never block the app on it */ }
+  }, [fragment, fragmentName])
 
   const applyImportedFragment = (wrapped) => {
     setFragment(wrapped)

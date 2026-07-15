@@ -808,12 +808,16 @@ function ArrayEditor({ arrKey, label, cols, value, onChange }) {
           <div key={i} className="flex items-center border-t border-[#F1F5F9] hover:bg-[#F8FAFC]">
             {editIdx === i ? (
               <>
-                {cols.map(c => (
-                  <input key={c.key} type="text" value={editRow[c.key] || ''}
-                    onChange={e => setEditRow(r => ({ ...r, [c.key]: e.target.value }))}
-                    className="px-2 py-0.5 text-xs border-r border-[#E2E8F0] flex-1 outline-none bg-[#EFF6FF]"
-                    style={{ minWidth: 60 }} />
-                ))}
+                {cols.map(c => {
+                  const cell = editRow[c.key]
+                  const inputVal = cell && typeof cell === 'object' ? JSON.stringify(cell) : (cell ?? '')
+                  return (
+                    <input key={c.key} type="text" value={inputVal}
+                      onChange={e => setEditRow(r => ({ ...r, [c.key]: e.target.value }))}
+                      className="px-2 py-0.5 text-xs border-r border-[#E2E8F0] flex-1 outline-none bg-[#EFF6FF]"
+                      style={{ minWidth: 60 }} />
+                  )
+                })}
                 <div className="flex px-1 gap-0.5">
                   <button onClick={saveEdit} className="text-green-600 text-xs px-1">✓</button>
                   <button onClick={() => setEditIdx(null)} className="text-[#94A3B8] text-xs px-1">✕</button>
@@ -821,11 +825,20 @@ function ArrayEditor({ arrKey, label, cols, value, onChange }) {
               </>
             ) : (
               <>
-                {cols.map(c => (
-                  <div key={c.key} className="px-2 py-1 text-xs text-[#374151] border-r border-[#F1F5F9] last:border-0 truncate flex-1" style={{ minWidth: 60 }}>
-                    {row[c.key] || ''}
-                  </div>
-                ))}
+                {cols.map(c => {
+                  const cell = row[c.key]
+                  // A cell can end up holding an unexpected nested object (e.g. malformed/foreign
+                  // JSON pasted into a Tabs/Segments array, or a Glean response that put a whole
+                  // node where a plain label string belongs) — rendering an object directly as a
+                  // JSX child throws "Objects are not valid as a React child" and crashes the
+                  // whole canvas. Show it as JSON instead of guessing it's always a primitive.
+                  const display = cell && typeof cell === 'object' ? JSON.stringify(cell) : (cell ?? '')
+                  return (
+                    <div key={c.key} className="px-2 py-1 text-xs text-[#374151] border-r border-[#F1F5F9] last:border-0 truncate flex-1" style={{ minWidth: 60 }}>
+                      {display}
+                    </div>
+                  )
+                })}
                 <div className="flex px-1 gap-0.5 shrink-0">
                   <button onClick={() => startEdit(i)} className="text-[#2563EB] text-xs px-1" title="Edit">✎</button>
                   <button onClick={() => moveRow(i, -1)} className="text-[#94A3B8] text-xs px-0.5" title="Up">▲</button>

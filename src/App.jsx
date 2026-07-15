@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import AgentCreator from './components/agent-creator/AgentCreator'
-import FragmentDesigner from './components/fragment-designer/FragmentDesigner'
+import AgentCreator, { AGENT_CREATOR_BACKUP_KEY } from './components/agent-creator/AgentCreator'
+import FragmentDesigner, { FRAGMENT_DESIGNER_BACKUP_KEY } from './components/fragment-designer/FragmentDesigner'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 
 const TABS = [
@@ -62,6 +62,7 @@ export default function App() {
           <ErrorBoundary
             key={`agent-boundary-${agentCreatorKey}`}
             title="Agent Creator crashed"
+            backupKey={AGENT_CREATOR_BACKUP_KEY}
             onReset={() => setAgentCreatorKey(k => k + 1)}
           >
             <AgentCreator key={agentCreatorKey} onUpdateVarPool={setVarPool} onUpdateVarSchemas={setVarSchemas} onHandoffToDesigner={handleHandoff} onSyncFragmentSilently={handleSilentSync} />
@@ -71,6 +72,7 @@ export default function App() {
           <ErrorBoundary
             key={`fragment-boundary-${fragmentDesignerKey}`}
             title="Fragment Designer crashed"
+            backupKey={FRAGMENT_DESIGNER_BACKUP_KEY}
             onReset={() => setFragmentDesignerKey(k => k + 1)}
           >
             <FragmentDesigner
