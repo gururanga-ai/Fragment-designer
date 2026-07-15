@@ -411,7 +411,21 @@ transformTable / editTable / joinTables — table shaping
   ],
   "outputVariableName": "primaryGridTable"
 }
-- transformTable also supports functionName "filter" (rowFilterExpression) or plain "fields" instead of "conditionalFields" when there's no conditional logic
+- transformTable's functionName is ONLY ONE OF: "summarize" | "filter" | "copy" | "merge" — NEVER
+  "fields". "fields" is not a function, it's a plain top-level array (an alternative to
+  "conditionalFields" when there's no per-item condition) that still requires functionName:
+  "summarize", and every entry — in "fields" or "conditionalFields" alike — MUST include an
+  "operation" (e.g. "asIs" to pass a field through unchanged, "groupBy", "sum", "countDistinct"),
+  not just sourceFieldName/targetFieldName. A field object with no operation is invalid.
+  Example unconditional shaping:
+  { "type": "transformTable", "functionName": "summarize", "primaryTableName": "batchPrintStatusTable",
+    "fields": [
+      { "sourceFieldName": "BatchId", "targetFieldName": "BatchId", "operation": "asIs" },
+      { "sourceFieldName": "CreatedDateTime", "targetFieldName": "CreatedDate", "operation": "asIs" }
+    ],
+    "outputVariableName": "batchPrintStatusDisplayTable" }
+  transformTable with functionName "filter" instead uses rowFilterExpression (a boolean expression
+  string) + primaryTableName + outputVariableName, no fields/conditionalFields at all.
 - editTable uses functionName "enrich" (enrichmentExpression: {field: "java expression"}) or "dropColumns" (columnNames: [...])
 - joinTables uses functionName "lookup" with primaryTableName/secondaryTableName/joinColumns/secondaryTableColumnNames
 
