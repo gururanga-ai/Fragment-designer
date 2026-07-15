@@ -157,13 +157,17 @@ actions-popover — dropdown button container
 
 table — data table CONTAINER (not an element — confirmed from real working fragments):
   Init: { "Type": "value-array", "DataSourcePath": "<key bound via {:KeyName} in the parent's Init.DefaultValues>" }
+  Config.ShowFilter: true — REQUIRED at the table's own Config level for ANY column's Filter to
+    actually render. A column with Filter.Filterable:true does nothing if the table container's
+    own Config.ShowFilter is missing/false — this is the single most common reason "I added
+    filters but nothing shows up" happens. Always set both together.
   Config.Columns (capital C) is an array — each column is its OWN object, never a plain {field,title}/{Header,Accessor} pair:
     {
       "UID": "ColBatchId",
       "Config": {
         "LabelKey": "Batch ID",
         "Sort": { "SortBy": "BatchId", "Sortable": true },
-        "Filter": { "Filterable": true }
+        "Filter": { "Filterable": true, "Type": "Textbox", "Placeholder": { "LabelKey": "Enter Batch ID" } }
       },
       "Slots": {
         "Default": [
@@ -171,10 +175,22 @@ table — data table CONTAINER (not an element — confirmed from real working f
         ]
       }
     }
+  - Filter REQUIRES both "Filterable" AND "Type" — {"Filterable": true} alone is incomplete and the
+    filter renderer won't know what UI to build. Valid Filter.Type values (confirmed from real
+    fragments): "Textbox" (plain text columns), "Date-range" (date/datetime columns, pair with
+    "RangeSelect": true), "Singleselect" / "Multiselect" (enum-like columns, pair with
+    "StaticList": [{"AttributeKey": "<label>", "AttributeValue": "<value>", "UID": "..."}],
+    "EntityKey": "AttributeKey", "EntityValue": "AttributeValue")
+  - Every column's "Input" (in its Slots.Default[0] key-value/action-button element) MUST exactly
+    match a real field name present in the data the table is bound to (Init.DataSourcePath's
+    source). A column whose Input doesn't exist in the actual row data gets silently dropped by
+    the table engine at render time — along with its filter. When fixing/adding a column, confirm
+    the field name against the flow's actual output (e.g. the renderUI dataMap or the upstream
+    transformTable's targetFieldName list), never invent one.
   - For a column with a percentage/suffix value: Slots.Default[0].Config.postValueSeparator = "%"
   - For an action/icon column (e.g. an insights button), Slots.Default[0].Element is "action-button" instead of "key-value"
   - Config.PaginationConfig = { "Paginate": true, "Size": [10,25,50,100], "Slot": "footer" } for pagination
-  - Config.ShowFilter / Config.showExportButton — optional top-level table toggles
+  - Config.showExportButton — optional top-level table toggle
   - Never use "columns" (lowercase), "field"/"title", or "Header"/"Accessor" — those are not this
     platform's schema and will not render
 
@@ -187,11 +203,52 @@ chart — data chart CONTAINER (not an element):
 ELEMENT TYPES AND THEIR REQUIRED CONFIG
 
 kpi-card — KPI metric display
-text — static or dynamic text
-filter-panel — filter sidebar panel
+text — static or dynamic text (display only — NEVER use this for something meant to be an actual
+  filter input; a "text" element with a placeholder-looking value renders a label, not an
+  interactive control, and binds to nothing. A row of Element:"text" nodes styled to look like a
+  filter bar is not filters — real, interactive filter inputs come from filter-panel or a table
+  column's own Filter config, never from plain text elements)
+filter-panel — REAL filter sidebar panel, with its own concrete schema (confirmed from real
+  working fragments — always use this shape, never invent input fields out of "text" elements):
+  {
+    "Element": "filter-panel",
+    "Style": { "width": "23vw" },
+    "Config": {
+      "Sections": [
+        {
+          "Type": "Object",
+          "SectionName": "Filters",
+          "Attributes": [
+            {
+              "UID": "Filter_BatchId",
+              "Input": "BatchId",
+              "AttributeType": "string",
+              "LabelKey": "Batch ID",
+              "Filter": { "Type": "Textbox", "Placeholder": { "LabelKey": "Enter Batch ID" } }
+            },
+            {
+              "UID": "Filter_CreatedDate",
+              "Input": "CreatedDate",
+              "AttributeType": "string",
+              "LabelKey": "Created Date",
+              "Filter": { "Type": "Date-range", "Placeholder": { "LabelKey": "Select Date Range" }, "RangeSelect": true }
+            }
+          ]
+        }
+      ],
+      "showFooter": true, "showApplyButton": true, "showClearButton": true
+    }
+  }
+  - Each Attribute's "Input" is the variable/field name the filter writes to when the user
+    interacts with it — this is what a downstream renderUI dataMap or flow action reads via
+    {:Filters.BatchId} etc., NOT a free-floating display value
+  - filter-panel is normally the sole child of a flyout-card container (see flyout-card above) in
+    a sidebar's Left slot, toggled via a header button's OnClick -> toggle-filter event
 button — action button
 badge — status or count badge
-segment-panel — segmented control
+segment-panel — segmented control; same Filter.Type/Placeholder/StaticList/EntityKey/EntityValue
+  shape as a table column filter (see table above), used for a small inline single-select toggle
+  rather than a full filter-panel section
 action-button — clickable icon/button element
 key-value — bound field renderer; Input is the field name on the row, e.g. { "Element": "key-value", "Input": "Status", "Config": {} } — this is how EVERY table column's Slots.Default entry renders its bound value, there is no separate "text"-with-a-value-binding pattern for table cells
 link — link/navigation element
@@ -336,6 +393,19 @@ VALIDATION FIX RULES
 - User asks to add a component → use add_child with a real child_node, or replace_node if swapping
 - Prefer correct, narrow fixes over broad rewrites
 - Never return a fix that wipes unrelated authored JSON
+- Table column has Filter.Filterable:true but the table's own Config.ShowFilter is missing/false
+  → set_config the table container to add ShowFilter:true (columns filtering silently does
+  nothing without this — check for it whenever a user reports "filters aren't showing/working")
+- Table column Filter object has only Filterable, no Type → set_config that column to add the
+  correct Filter.Type (Textbox/Date-range/Singleselect/Multiselect based on the field) and a
+  Placeholder — an incomplete Filter object is a real bug, not a style preference
+- A "filter bar" made of plain Element:"text" nodes with placeholder-looking values → this is not
+  functional filters at all; if the user reports filters not working and the fragment has this
+  pattern, say so explicitly and suggest replacing it with a filter-panel (see ELEMENT TYPES above)
+  rather than tweaking the text nodes' styling
+- A column/filter references an Input field name that doesn't exist in the actual bound data →
+  flag this specifically (the column silently gets dropped at render), don't just suggest generic
+  layout fixes
 
 EXAMPLE — conversation mode response
 
