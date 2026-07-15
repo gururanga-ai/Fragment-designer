@@ -951,7 +951,11 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
               frag={frag}
               selPath={selPath}
               selNode={selNode}
-              onApply={(newFrag) => setFrag(newFrag)}
+              // Glean-applied fixes commit straight to the real fragment (not just this modal's
+              // local draft) — a chat "yes, fix it" should actually land, not silently sit in
+              // AlignFix's own `frag` state until the user separately clicks "Save & Apply".
+              // Manual CSS-editor edits elsewhere in this modal still go through that gate.
+              onApply={(newFrag) => { setFrag(newFrag); onSave(newFrag) }}
             />
           )}
         </div>

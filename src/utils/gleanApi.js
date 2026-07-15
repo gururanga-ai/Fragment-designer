@@ -132,12 +132,12 @@ export async function gleanChat({ conversation, chatId, agent_context, useDeepRe
  * onPartial(text) is called with the growing response.
  * Returns the final full text.
  */
-export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json, issues, conversation, useDeepResearch, onPartial, onFallback, signal }) {
+export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json, issues, selected_node, var_pool, conversation, useDeepResearch, onPartial, onFallback, signal }) {
   const proxyCall = async () => {
     const resp = await fetch('/api/glean/agent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
+      body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], selected_node: selected_node || null, var_pool: var_pool || {}, conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
       signal,
     })
     if (!resp.ok) {
@@ -151,7 +151,7 @@ export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json,
     const built = await fetch('/api/glean/agent/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
+      body: JSON.stringify({ prompt, uploadedFileIds: uploadedFileIds || [], fragment_json: fragment_json || {}, issues: issues || [], selected_node: selected_node || null, var_pool: var_pool || {}, conversation: conversation || [], useDeepResearch: !!useDeepResearch }),
       signal,
     }).then(r => r.json())
     try {

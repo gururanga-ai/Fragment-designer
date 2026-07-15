@@ -782,6 +782,8 @@ export default function FragmentDesigner({ varPool, setVarPool, varSchemas = {},
               onActionBar={handleGleanActionBar}
               title="Fragment Designer Agent"
               fragmentJson={fragment.Fragment}
+              selectedPath={selectedPath}
+              varPool={varPool}
               className="flex-1"
             />
           ) : (

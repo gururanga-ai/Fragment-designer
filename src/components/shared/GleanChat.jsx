@@ -20,6 +20,8 @@ export default function GleanChat({
   title = 'Glean AI',
   systemPrompt,
   fragmentJson,
+  selectedPath,
+  varPool,
   currentFlow,
   className = '',
 }) {
@@ -48,6 +50,27 @@ export default function GleanChat({
   }, [history, partialText])
 
   const buildPrompt = useCallback((text) => text, [])
+
+  // Walk fragmentJson down selectedPath (['Slots','Default',0,...]) to describe what the user
+  // is actually looking at in the canvas right now — without this, "fix this"/"correct this
+  // container" in the sidebar chat had nothing to anchor to but the full fragment tree + prose,
+  // so Glean would guess (or mangle) the wrong node instead of the one on screen.
+  const describeSelectedNode = useCallback(() => {
+    if (!fragmentJson || !Array.isArray(selectedPath) || selectedPath.length === 0) return null
+    let node = fragmentJson
+    for (const seg of selectedPath) {
+      if (node == null) return null
+      node = node[seg]
+    }
+    if (!node || typeof node !== 'object') return null
+    return {
+      path: selectedPath,
+      type: node.Container || node.Element || '',
+      config: node.Config || {},
+      css: node.Style?.css || {},
+      init: node.Init || undefined,
+    }
+  }, [fragmentJson, selectedPath])
 
   const uploadFile = useCallback(async (file) => {
     // Preview the image locally first
@@ -136,8 +159,10 @@ export default function GleanChat({
       const prompt = buildPrompt(text)
       const uploadedFileIds = att.map(a => a.fileId).filter(Boolean)
       const isNonEmptyFrag = fragmentJson && typeof fragmentJson === 'object' && Object.keys(fragmentJson).length > 0
+      const selectedNode = describeSelectedNode()
+      const isNonEmptyVarPool = varPool && typeof varPool === 'object' && Object.keys(varPool).length > 0
       const args = mode === 'agent'
-        ? { prompt, uploadedFileIds, fragment_json: isNonEmptyFrag ? fragmentJson : {}, issues: [], conversation: history.map(m => ({ role: m.role, text: m.text })), useDeepResearch: deepResearch, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
+        ? { prompt, uploadedFileIds, fragment_json: isNonEmptyFrag ? fragmentJson : {}, issues: [], selected_node: selectedNode, var_pool: isNonEmptyVarPool ? varPool : {}, conversation: history.map(m => ({ role: m.role, text: m.text })), useDeepResearch: deepResearch, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
         : { conversation: newHistory, chatId, agent_context: currentFlow || null, useDeepResearch: deepResearch, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
 
       await fn(args)
@@ -157,7 +182,7 @@ export default function GleanChat({
     } finally {
       setStreaming(false)
     }
-  }, [input, attachments, streaming, history, chatId, mode, onHistoryChange, buildPrompt, fragmentJson, currentFlow, deepResearch])
+  }, [input, attachments, streaming, history, chatId, mode, onHistoryChange, buildPrompt, fragmentJson, currentFlow, deepResearch, describeSelectedNode, varPool])
 
   const stop = () => { abortRef.current?.abort(); setStreaming(false); setPartialText('') }
 

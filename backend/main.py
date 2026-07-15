@@ -232,6 +232,13 @@ class AgentRequest(BaseModel):
     uploadedFileIds: list[str] = Field(default_factory=list)
     fragment_json: dict = Field(default_factory=dict)
     issues: list = Field(default_factory=list)
+    # Node currently selected in the canvas ({path, type, config, css, init}) — lets the model
+    # target the exact container the user is looking at instead of guessing from prose alone.
+    selected_node: dict | None = None
+    # Agent Creator's variable pool (dataMap: {dataKey: backendVar}) for the linked agent, when
+    # this fragment was handed off from / is tied to an Agent Creator agent — real field names to
+    # bind Init.DataSourcePath / column Input / filter Input to, instead of invented ones.
+    var_pool: dict = Field(default_factory=dict)
     conversation: list[ChatMessage] = Field(default_factory=list)
     useDeepResearch: bool = False
 
@@ -384,6 +391,8 @@ def _build_agent_body(req: AgentRequest) -> dict[str, Any]:
         "user_prompt": req.prompt,
         "fragment_json": req.fragment_json,
         "issues": req.issues,
+        "selected_node": req.selected_node,
+        "var_pool": req.var_pool,
         "tool_context": {
             "source": "Fragment UI Designer Align Fix Validate",
             "goal": "Render suggested fixes in Validate section and allow Apply Suggested Fix",
@@ -393,6 +402,16 @@ def _build_agent_body(req: AgentRequest) -> dict[str, Any]:
                                 "Slot keys with spaces or special characters MUST use bracket-quote notation ['Slot Name'] — "
                                 "never dot-then-apostrophe (Slots'Fill Rate' is invalid and will fail to apply).",
             },
+            "selected_node_meaning": "selected_node (if not null) is the exact container/element the user currently "
+                                      "has selected in the canvas — its 'path' is already a correct Fragment-root-relative "
+                                      "path you can use directly. When the user's request doesn't name a different "
+                                      "section explicitly (e.g. 'fix this', 'correct this container', 'this looks off'), "
+                                      "selected_node IS the target — do not guess a different node.",
+            "var_pool_meaning": "var_pool (if non-empty) is the real dataMap from this fragment's linked Agent Creator "
+                                 "agent: {dataKey: backendVariablePath}. These are confirmed real field/variable names — "
+                                 "prefer them over invented ones for Init.DataSourcePath, column/filter Input, and any "
+                                 "other data binding. If a container's existing binding already matches a var_pool key, "
+                                 "preserve it as-is unless the user explicitly asks to change that binding.",
         },
     }
 
@@ -409,12 +428,21 @@ def _build_agent_body(req: AgentRequest) -> dict[str, Any]:
     # /api/glean/chat (Agent Creator) already uses. Without this every message was a fresh,
     # context-free call: follow-ups like "again give" or "no, fix the other one" had nothing
     # to refer back to, so the AI would ignore/misread what the user actually meant.
+    # Must include the assistant's OWN prior replies (not just user turns) — a bare confirmation
+    # like "yes please" or "fix it" only means something if the model can see what it itself
+    # proposed last turn (e.g. the suggestions/explanation it gave); dropping those turns made
+    # every confirmation land with nothing to confirm, so the model fell back to CONVERSATION mode
+    # and re-explained the same issue instead of applying the fix.
     for msg in req.conversation:
-        if msg.role != "user":
+        if msg.role == "user":
+            author = "USER"
+        elif msg.role in ("ai", "assistant"):
+            author = "CHATBOT"
+        else:
             continue
         messages.append({
             "agentConfig": {"agent": "FAST"},
-            "author": "USER",
+            "author": author,
             "fragments": [{"text": msg.text}],
             "messageType": "CONTENT",
             "ts": now,
