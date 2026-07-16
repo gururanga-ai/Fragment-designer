@@ -295,6 +295,26 @@ filter-panel — REAL filter sidebar panel, with its own concrete schema (confir
     variant, prefixName, actionKey, etc.); filters always live under a filter-panel element.
   - filter-panel is normally the sole child of a flyout-card container (see flyout-card above) in
     a sidebar's Left slot, toggled via a header button's OnClick -> toggle-filter event
+  - CRITICAL RUNTIME CONTRACT — filter-panel does NOTHING by itself. Clicking Apply only calls
+    addFilterSections(...) + makeFilterPanelRequest() on a live filtering datasource found by
+    walking UP the tree from the filter-panel — the nearest ancestor node carrying an Init block
+    whose Type implements filtering (e.g. "agentic-api", "component-api"). If no such ancestor
+    Init exists anywhere above the filter-panel, Apply is a silent no-op — this is the single most
+    common reason "the filter doesn't do anything" happens. A table/chart's own "value-array" Init
+    does NOT satisfy this: value-array only reads an already-provided array at a fixed
+    DataSourcePath, it is not a request layer and has no Apply behavior of its own.
+  - Whenever a fragment has BOTH a filter-panel AND data-bound children (table/chart/kpi-card),
+    put ONE shared Init on a common ancestor above both — normally the Fragment root itself:
+    "Init": { "Type": "agentic-api", "DefaultValues": { "Filters": {} } }
+    Every table/chart under that ancestor can still use its own "value-array" Init with a
+    DataSourcePath — that's fine and expected — but that DataSourcePath is read FROM the shared
+    ancestor's response, not an independent data source. The filter-panel and every data-bound
+    element it should affect must all be descendants of that SAME Init-bearing ancestor — do not
+    generate a filter-panel as a sibling branch disconnected from the data it's meant to filter.
+  - When diagnosing "filter panel Apply does nothing" / "filter not working": check for this
+    shared ancestor Init FIRST, before touching filter-panel's own Config or Style. A
+    perfectly-configured filter-panel with no ancestor filtering Init will never do anything, no
+    matter what CSS or Sections tweaks are applied to it.
 button — action button
 badge — status or count badge
 segment-panel — segmented control; same Filter.Type/Placeholder/StaticList/EntityKey/EntityValue
@@ -315,7 +335,13 @@ When fragment_json is empty:
 6. Bind data and filters to the variable names mentioned in user_prompt
 7. Set required CSS for proper height fill where needed
 8. Never leave container children empty if the prompt specifies content
-9. Return the fragment as: { "Fragment": { ...root node... } }
+9. If the layout includes a filter-panel alongside any data-bound element (table/chart/kpi-card),
+   the Fragment root (or a shared ancestor above both) MUST carry a filtering-capable Init —
+   { "Type": "agentic-api", "DefaultValues": { "Filters": {} } } — see the CRITICAL RUNTIME
+   CONTRACT note under filter-panel in ELEMENT TYPES above. A filter-panel with no such ancestor
+   Init renders but its Apply button does nothing; this is not optional polish, generating a
+   filter-panel without it is an incomplete fragment even if every other part is correct.
+10. Return the fragment as: { "Fragment": { ...root node... } }
 
 CONVERSATION / EXPLANATION MODE RULES
 
@@ -457,6 +483,16 @@ VALIDATION FIX RULES
 - A column/filter references an Input field name that doesn't exist in the actual bound data →
   flag this specifically (the column silently gets dropped at render), don't just suggest generic
   layout fixes
+- User reports "filter panel Apply does nothing" / "filter not working" and there's a filter-panel
+  in the fragment → BEFORE suggesting any Config/Style tweak to the filter-panel itself, walk UP
+  from it to find whether any ancestor node (ideally the Fragment root) has an Init block with a
+  filtering-capable Type ("agentic-api", "component-api", etc.). If no such ancestor Init exists,
+  THAT is the bug — add_child/merge_json to give the correct ancestor an Init like
+  { "Type": "agentic-api", "DefaultValues": { "Filters": {} } }, or if the root already has an
+  unrelated Init, merge Filters into its DefaultValues instead of replacing it. A table/chart's own
+  "value-array" Init does not substitute for this — it has no Apply behavior of its own, it only
+  reads a fixed DataSourcePath. Do not propose cosmetic CSS/Sections fixes to a filter-panel whose
+  real problem is a missing shared ancestor Init — that fix will look plausible but do nothing.
 
 EXAMPLE — conversation mode response
 
