@@ -2,8 +2,8 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import Modal from '../shared/Modal'
 import { COMP_COLORS, COMP_ICONS, ELEMENT_LABELS, CHART_TYPES } from '../../utils/fragmentData'
 import { HtmlNodeRenderer, collectSegments } from './FragmentCanvas'
-import { gleanRunWorkflow } from '../../utils/gleanApi'
-import { safeCopyToClipboard } from '../../utils/clipboard'
+import { gleanRunWorkflow, gleanUploadFile } from '../../utils/gleanApi'
+import { safeCopyToClipboard, safeReadClipboardItems, safeReadClipboardText } from '../../utils/clipboard'
 import { extractJson as extractJsonShared } from '../../utils/agentBuilder'
 import { applyGleanSuggestion } from './FragmentDesigner'
 
@@ -411,16 +411,74 @@ function AlignGlean({ frag, selPath, selNode, onApply }) {
   // to. Without this each send() was a fresh, context-free call with zero memory of earlier turns.
   const [history, setHistory] = useState([])
   const [deepResearch, setDeepResearch] = useState(false)
+  // Attachments: [{name, fileId, preview}] — preview is dataURL for images
+  const [attachments, setAttachments] = useState([])
+  const [uploading, setUploading] = useState(false)
   const abortRef = useRef(null)
   const responseRef = useRef('')
   const bottomRef = useRef(null)
+  const fileInputRef = useRef(null)
+
+  const uploadFile = useCallback(async (file) => {
+    const preview = file.type.startsWith('image/') ? await new Promise(res => {
+      const r = new FileReader(); r.onload = e => res(e.target.result); r.readAsDataURL(file)
+    }) : null
+    setUploading(true)
+    try {
+      const { fileId, filename } = await gleanUploadFile(file)
+      setAttachments(a => [...a, { name: filename || file.name, fileId, preview }])
+    } catch (err) {
+      alert(`Upload failed: ${err.message}`)
+    } finally {
+      setUploading(false)
+    }
+  }, [])
+
+  const handlePaste = useCallback(async (e) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (file) await uploadFile(file)
+        return
+      }
+    }
+  }, [uploadFile])
+
+  const handleClipboardPaste = useCallback(async () => {
+    const items = await safeReadClipboardItems()
+    if (items) {
+      for (const item of items) {
+        const imgType = item.types.find(t => t.startsWith('image/'))
+        if (imgType) {
+          const blob = await item.getType(imgType)
+          const file = new File([blob], 'pasted-image.png', { type: imgType })
+          await uploadFile(file)
+          return
+        }
+        if (item.types.includes('text/plain')) {
+          const blob = await item.getType('text/plain')
+          const text = await blob.text()
+          if (text.trim()) setInput(prev => prev ? `${prev}\n${text}` : text)
+          return
+        }
+      }
+      return
+    }
+    const text = await safeReadClipboardText()
+    if (text && text.trim()) { setInput(prev => prev ? `${prev}\n${text}` : text); return }
+    alert('Clipboard access unavailable. Use Ctrl+V in the text area instead.')
+  }, [uploadFile])
 
   useEffect(() => {
     if (streaming) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [streaming])
 
   const sendPrompt = async (promptText) => {
-    if (!promptText.trim() || status === 'loading') return
+    const text = promptText.trim()
+    if ((!text && attachments.length === 0) || status === 'loading') return
     abortRef.current?.abort()
     const ctrl = new AbortController()
     abortRef.current = ctrl
@@ -428,11 +486,14 @@ function AlignGlean({ frag, selPath, selNode, onApply }) {
     setStreaming('')
     setLastApply(null)
     responseRef.current = ''
+    const att = attachments
+    setAttachments([])
     const nodeType = selNode?.Container || selNode?.Element || 'root'
     const nodePath = selPath.length > 0 ? selPath.join(' › ') : '(root)'
     const nodeCss = JSON.stringify(selNode?.Style?.css || {}, null, 2)
     const nodeConfig = JSON.stringify(selNode?.Config || {}, null, 2)
-    const fullPrompt = `User request: ${promptText.trim()}
+    const requestText = text || '(see attached file/image)'
+    const fullPrompt = `User request: ${requestText}
 
 Currently selected node:
   path: ${nodePath}
@@ -442,10 +503,12 @@ Currently selected node:
 
 Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the user request. Return suggestions or full Fragment per mode rules.`
     const priorTurns = history
-    setHistory(h => [...h, { role: 'user', text: promptText.trim() }])
+    const userText = requestText + (att.length > 0 ? ` [${att.length} attachment(s)]` : '')
+    setHistory(h => [...h, { role: 'user', text: userText }])
     try {
       await gleanRunWorkflow({
         prompt: fullPrompt,
+        uploadedFileIds: att.map(a => a.fileId).filter(Boolean),
         fragment_json: frag,
         issues: [],
         conversation: priorTurns,
@@ -554,21 +617,46 @@ Fix/adjust the selected node (path: ${JSON.stringify(selPath)}) based on the use
         </div>
       )}
 
+      {/* attachment chips */}
+      {attachments.length > 0 && (
+        <div className="px-2 pt-1.5 flex flex-wrap gap-1">
+          {attachments.map((a, i) => (
+            <div key={i} className="flex items-center gap-1 bg-white border border-[#CBD5E1] rounded px-2 py-0.5">
+              {a.preview && <img src={a.preview} alt="" className="w-6 h-6 rounded object-cover" />}
+              <span className="text-[#475569] text-[10px] truncate max-w-24">{a.name}</span>
+              <button onClick={() => setAttachments(aa => aa.filter((_, j) => j !== i))} className="text-red-500 text-[10px] hover:text-red-700 ml-0.5">✕</button>
+            </div>
+          ))}
+          {uploading && <span className="text-[#3B82F6] text-[10px] self-center animate-pulse">Uploading…</span>}
+        </div>
+      )}
+
       {/* input row */}
       <div className="flex gap-1.5 px-2 py-1.5 items-end">
+        <input type="file" ref={fileInputRef} accept="image/*,.json,.txt,.csv" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = '' }} />
         <textarea
           rows={2}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKey}
-          placeholder={`Ask Glean to fix selected node (${selNode?.Container || selNode?.Element || 'root'})… Enter to send`}
+          onPaste={handlePaste}
+          placeholder={`Ask Glean to fix selected node (${selNode?.Container || selNode?.Element || 'root'})… Enter to send, 📋 to paste`}
           className="flex-1 text-xs rounded border border-[#CBD5E1] px-2 py-1 resize-none focus:outline-none focus:ring-1 focus:ring-[#3B82F6] bg-white"
         />
-        <button
-          onClick={send}
-          disabled={status === 'loading' || !input.trim()}
-          className="px-3 py-1.5 text-xs rounded bg-[#1E3A8A] text-white font-semibold hover:bg-[#1E40AF] disabled:opacity-40 shrink-0"
-        >Send</button>
+        <div className="flex flex-col gap-1 shrink-0">
+          <div className="flex gap-1">
+            <button onClick={() => fileInputRef.current?.click()} title="Attach file / image"
+              className="px-2 py-1 text-xs rounded bg-[#E2E8F0] text-[#475569] hover:bg-[#CBD5E1]">📎</button>
+            <button onClick={handleClipboardPaste} title="Paste from clipboard (text or image)"
+              className="px-2 py-1 text-xs rounded bg-[#E2E8F0] text-[#475569] hover:bg-[#CBD5E1]">📋</button>
+          </div>
+          <button
+            onClick={send}
+            disabled={status === 'loading' || (!input.trim() && attachments.length === 0)}
+            className="px-3 py-1.5 text-xs rounded bg-[#1E3A8A] text-white font-semibold hover:bg-[#1E40AF] disabled:opacity-40"
+          >Send</button>
+        </div>
       </div>
     </div>
   )
