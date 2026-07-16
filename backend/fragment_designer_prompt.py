@@ -140,6 +140,8 @@ Every node in a fragment generally follows this shape:
 {
   "Container": "containerType or empty string",
   "Element": "elementType or empty string",
+  "UID": "NodeUniqueId",
+  "Init": { "Type": "...", "...": "..." },
   "Config": { ... },
   "Style": { "css": { ... } },
   "Events": { "Listeners": { ... }, "Triggers": { ... } },
@@ -155,6 +157,17 @@ Rules:
 - Config holds component-specific configuration
 - Style.css holds CSS properties as a flat object with camelCase keys
 - Events contains listener/trigger wiring. Preserve it carefully
+- UID and Init are ALWAYS siblings of Container/Element/Config — NEVER nested inside Config. A
+  fragment with "Config": {"UID": "..."} or "Config": {"Init": {...}} has the field in the wrong
+  place on every single node it appears on; this is a systemic, fragment-wide bug, not a one-off
+  typo, and every node in the tree must be checked/fixed the same way, not just the one the user
+  pointed at
+- A Fragment has exactly ONE top-level "Fragment" key: { "Fragment": { <root node> } }. Never emit
+  a second sibling "Fragment" key anywhere in the JSON (e.g. a stray trailing block re-wrapping
+  Init) — in JSON, a duplicate key is either a parse error or silently overwrites the first
+  occurrence depending on the parser, and either way the real tree is at risk of being dropped.
+  If Init needs to be added to the root node, merge it in as a sibling field on the existing root
+  node — never create a second "Fragment" key to hold it
 
 CONTAINER TYPES AND THEIR REQUIRED CSS
 
@@ -178,6 +191,15 @@ card — card wrapper with padding and border:
 flyout-card — collapsible left sidebar panel:
   Slots: Default
   Preserve ToggleFlyout event listeners when present
+  - Config.hideFlyoutCardByDefault: true — REQUIRED whenever a flyout-card is used, most commonly
+    to wrap a filter-panel. The component defaults isFlyoutVisible = true, so without this flag
+    the panel renders permanently open on load with no way to close it. Pair it with a toggle
+    button elsewhere in the fragment (e.g. a header-action bar) wired via Events.Listeners.
+    ToggleFlyout -> { "SourceContainerId": "<button's parent container UID>", "EventId":
+    "toggle-filter" }, and that button's own Events.Triggers.OnClick -> { "ContainerId":
+    "<same UID>", "EventId": "toggle-filter" }. A flyout-card with no toggle button anywhere in
+    the fragment and no hideFlyoutCardByDefault flag is an incomplete pattern — the user has no
+    way to open or close the panel
 
 tab-group — tabbed container:
   Preserve tab names and slot keys
@@ -247,7 +269,6 @@ chart — data chart CONTAINER (not an element):
 
 ELEMENT TYPES AND THEIR REQUIRED CONFIG
 
-kpi-card — KPI metric display
 text — static or dynamic text (display only — NEVER use this for something meant to be an actual
   filter input; a "text" element with a placeholder-looking value renders a label, not an
   interactive control, and binds to nothing. A row of Element:"text" nodes styled to look like a
@@ -286,10 +307,19 @@ filter-panel — REAL filter sidebar panel, with its own concrete schema (confir
   - Each Attribute's "Input" is the variable/field name the filter writes to when the user
     interacts with it — this is what a downstream renderUI dataMap or flow action reads via
     {:Filters.BatchId} etc., NOT a free-floating display value
-  - filter-panel Config holds ONLY "Sections" (plus the standard Style/UID wrappers) — never add
-    "showFooter", "showApplyButton", or "showClearButton". Those are not part of this platform's
-    filter-panel schema; a fragment carrying them gets rejected at publish/save time with "Invalid
-    data for the field Content" (fwe::10013), confirmed against real Composer-accepted exports.
+  - filter-panel Config MUST also set "showFooter": true, "showApplyButton": true,
+    "showClearButton": true alongside "Sections" — confirmed against multiple real,
+    Composer-accepted, working agent exports (e.g. the FillRate analyzer agent). Without these
+    three flags the component renders no footer at all, so there is no Apply/Clear button and the
+    user has no way to commit a filter selection — the panel looks fine but is functionally dead.
+    Do NOT omit them and do NOT invent an OnApply/OnClear Events.Triggers pair on the filter-panel
+    itself as a substitute — the component commits filters internally when its own Apply button
+    (rendered by these flags) is clicked, it does not rely on an external event contract.
+  - A Date-range Attribute's committed value lands at Filters.<Input> as a 2-element array
+    [isoStartDate, isoEndDate], not two separate scalar keys — a flow reading it must index
+    {:Filters.<Input>.0} / {:Filters.<Input>.1} (see agent_creator_prompt.py's flow-generation
+    rules for the exact action pattern), never invent flat keys like Filters.startDate/endDate
+    that nothing in the filter-panel ever produces
   - "Sections" belongs on filter-panel ONLY — never put a "Sections" array in a button's Config
     (or any other element type). A button's Config only carries button/action fields (LabelKey,
     variant, prefixName, actionKey, etc.); filters always live under a filter-panel element.
@@ -303,9 +333,14 @@ filter-panel — REAL filter sidebar panel, with its own concrete schema (confir
     common reason "the filter doesn't do anything" happens. A table/chart's own "value-array" Init
     does NOT satisfy this: value-array only reads an already-provided array at a fixed
     DataSourcePath, it is not a request layer and has no Apply behavior of its own.
-  - Whenever a fragment has BOTH a filter-panel AND data-bound children (table/chart/kpi-card),
+  - Whenever a fragment has BOTH a filter-panel AND data-bound children (table/chart/KPI tile),
     put ONE shared Init on a common ancestor above both — normally the Fragment root itself:
-    "Init": { "Type": "agentic-api", "DefaultValues": { "Filters": {} } }
+    "Init": { "Type": "agentic-api", "DefaultValues": { "Filters": {:Filters} } }
+    Use the bare template var {:Filters} (unquoted, matches the flow's "Filters" workflow
+    variable), NOT a hardcoded "{}" — hardcoding {} re-blanks the filter state on every render and
+    defeats a persisted selection. If the linked agent flow's renderUI dataMap doesn't yet expose
+    a "Filters" key, that's a flow gap to flag, not a reason to fall back to a hardcoded empty
+    object here.
     Every table/chart under that ancestor can still use its own "value-array" Init with a
     DataSourcePath — that's fine and expected — but that DataSourcePath is read FROM the shared
     ancestor's response, not an independent data source. The filter-panel and every data-bound
@@ -324,6 +359,25 @@ action-button — clickable icon/button element
 key-value — bound field renderer; Input is the field name on the row, e.g. { "Element": "key-value", "Input": "Status", "Config": {} } — this is how EVERY table column's Slots.Default entry renders its bound value, there is no separate "text"-with-a-value-binding pattern for table cells
 link — link/navigation element
 
+KPI TILES — there is no "kpi-card" element, it does not exist in this platform's component
+library and will render as nothing. Build a KPI tile as a "card" Container holding two
+"key-value" Elements — a small label row and a large bold value row (confirmed from real working
+fragments):
+{
+  "Container": "card",
+  "UID": "KPI_TotalTasks",
+  "Style": { "css": { "padding": "16px", "border": "1px solid #E2E8F0", "borderRadius": "8px", "background": "white" } },
+  "Slots": {
+    "Default": [
+      { "Element": "key-value", "Config": { "LabelKey": "Total Tasks", "keyValueSeparator": "" }, "Style": { "css": { "fontSize": "12px", "color": "#555" } } },
+      { "Element": "key-value", "Input": "TotalTasksKpi", "Config": {}, "Style": { "css": { "fontSize": "24px", "fontWeight": "bold", "color": "#111" } } }
+    ]
+  }
+}
+The value row's "Input" must be a scalar variable the flow actually produces (see
+agent_creator_prompt.py's renderUI dataMap guidance for row-0 extraction) — never bind it to an
+invented object path like "KPI.TotalTasks" that nothing in the flow ever outputs.
+
 GENERATION MODE RULES
 
 When fragment_json is empty:
@@ -335,12 +389,16 @@ When fragment_json is empty:
 6. Bind data and filters to the variable names mentioned in user_prompt
 7. Set required CSS for proper height fill where needed
 8. Never leave container children empty if the prompt specifies content
-9. If the layout includes a filter-panel alongside any data-bound element (table/chart/kpi-card),
+9. If the layout includes a filter-panel alongside any data-bound element (table/chart/KPI tile),
    the Fragment root (or a shared ancestor above both) MUST carry a filtering-capable Init —
-   { "Type": "agentic-api", "DefaultValues": { "Filters": {} } } — see the CRITICAL RUNTIME
-   CONTRACT note under filter-panel in ELEMENT TYPES above. A filter-panel with no such ancestor
-   Init renders but its Apply button does nothing; this is not optional polish, generating a
-   filter-panel without it is an incomplete fragment even if every other part is correct.
+   { "Type": "agentic-api", "DefaultValues": { "Filters": {:Filters} } } (bare template var, not a
+   hardcoded {} — see the CRITICAL RUNTIME CONTRACT note under filter-panel in ELEMENT TYPES
+   above). A filter-panel with no such ancestor Init renders but its Apply button does nothing;
+   this is not optional polish, generating a filter-panel without it is an incomplete fragment
+   even if every other part is correct.
+   Also make sure the filter-panel itself carries "showFooter": true, "showApplyButton": true,
+   "showClearButton": true in its Config — without these three flags there is no Apply/Clear
+   button to click in the first place.
 10. Return the fragment as: { "Fragment": { ...root node... } }
 
 CONVERSATION / EXPLANATION MODE RULES
@@ -488,11 +546,14 @@ VALIDATION FIX RULES
   from it to find whether any ancestor node (ideally the Fragment root) has an Init block with a
   filtering-capable Type ("agentic-api", "component-api", etc.). If no such ancestor Init exists,
   THAT is the bug — add_child/merge_json to give the correct ancestor an Init like
-  { "Type": "agentic-api", "DefaultValues": { "Filters": {} } }, or if the root already has an
-  unrelated Init, merge Filters into its DefaultValues instead of replacing it. A table/chart's own
-  "value-array" Init does not substitute for this — it has no Apply behavior of its own, it only
-  reads a fixed DataSourcePath. Do not propose cosmetic CSS/Sections fixes to a filter-panel whose
-  real problem is a missing shared ancestor Init — that fix will look plausible but do nothing.
+  { "Type": "agentic-api", "DefaultValues": { "Filters": {:Filters} } } (bare template var), or if
+  the root already has an unrelated Init, merge Filters into its DefaultValues instead of
+  replacing it. A table/chart's own "value-array" Init does not substitute for this — it has no
+  Apply behavior of its own, it only reads a fixed DataSourcePath. Do not propose cosmetic
+  CSS/Sections fixes to a filter-panel whose real problem is a missing shared ancestor Init — that
+  fix will look plausible but do nothing. Also check the filter-panel itself has
+  showFooter/showApplyButton/showClearButton:true — without them there is no footer/Apply button
+  to click at all, a separate and equally common cause of "Apply does nothing."
 
 EXAMPLE — conversation mode response
 

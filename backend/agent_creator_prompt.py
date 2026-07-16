@@ -176,6 +176,11 @@ CONFIG MODE RULES
 - Prefer category as an array of strings
 - agentRootResourceFolders MUST include BOTH "/agents/dataInsights/<agentId>" AND "/ext/agents/<agentId>" — the agent will not load on the platform if either is missing (confirmed against real working agent exports)
 - Put all default config key-values inside defaults
+- If defaults.RequiredFilter is set (or being updated), its value must name the ACTUAL filter
+  key(s) the fragment's filter-panel/flow produce (e.g. a Date-range attribute's own "Input", such
+  as "createdDateRange") — never a stale or invented key like "startDate,endDate" that nothing in
+  the filter-panel or flow ever sets. When modifying an existing agent's filters, re-check this
+  value against the real filter-panel Attribute Input names, don't leave it unsynced
 - Use concise, production-style values
 - If the user gives partial info, fill what is reasonable and omit what is unknown rather than inventing many fields
 - Do not return unsupported top-level keys unless the user explicitly asks for a manual full agent JSON
@@ -328,6 +333,13 @@ GENERAL FLOW ACTION RULES
 - Do not duplicate actions, render steps, response steps, SQL steps, or transformation steps
 - If a later action depends on an earlier action, make the dependency explicit using outputVariableName and references
 - Use only validated service names, SQL objects, entities, fields, attribute names, payload keys, and identifiers
+- FIELD-NAME CONSISTENCY INTO THE UI — when a transformTable's targetFieldName list feeds a
+  renderUI dataMap that a fragment's chart/table/key-value binds to, the exact targetFieldName
+  strings (case included) are the only field names the fragment can legally reference (chart
+  dataMapping.seriesMappings.fieldMappings keys, table column Input, key-value Input). If you
+  change a transformTable's output field names, or if a request touches the fragment side too,
+  verify/update the fragment's bindings to match exactly — a chart mapped to a field name the
+  transformTable never produced renders empty with no visible error, which is easy to miss
 - CONVERSATIONAL / NON-UI AGENTS — decide this FIRST, before picking a response shape: if the
   request describes a conversational, chat-based, Q&A, or purely data-lookup agent (no dashboard,
   table, chart, screen, or rendered UI is asked for), do NOT include a renderUI action — end the
@@ -579,6 +591,34 @@ If the user asks about date filter bugs or provides date-range action JSON:
   - prefer minimal changes
   - if the real issue is raw ISO date-time strings being used directly in the query, recommend stripping or normalizing the time portion before building SQL
   - do not suggest unsupported expression syntax inside template placeholders unless the user already confirms it works in their environment
+
+FILTER-PANEL DATA CONTRACT
+────────────────────────────────────────────────────────────
+When a flow reads filters committed from a fragment's filter-panel element (Filters.<Input>):
+- Guard the very first read with a null-check init action:
+  { "type": "setValue", "name": "initializeFilters", "input": {}, "output": {},
+    "description": "...", "functionName": "assignValue", "value": {},
+    "conditions": ["Filters==null"], "outputVariableName": "Filters" }
+- A Date-range filter attribute's committed value is a 2-element ISO array at
+  Filters.<Input> — [isoStart, isoEnd] — NEVER two separate scalar keys like
+  Filters.startDate/Filters.endDate; nothing in the filter-panel ever produces those. Read it with
+  processDateTime/convertDateTimeFormat, indexed by position, guarded so it doesn't fire on first
+  load before a selection exists:
+  { "type": "processDateTime", "name": "normalizeRangeStart", "input": {}, "output": {},
+    "description": "...", "functionName": "convertDateTimeFormat",
+    "parameterMap": { "inputDateTime": "{:Filters.createdDateRange.0}", "inputFormat": "iso",
+      "outputFormat": "yyyy-MM-dd", "timeZone": "{:locationtimezone}" },
+    "conditions": ["Filters.createdDateRange!=null"], "outputVariableName": "startDate" }
+  (mirror with ".1" -> "endDate")
+- If the flow's renderUI feeds a fragment whose root Init.DefaultValues carries "Filters":
+  {:Filters} (round-tripping the current selection back into the fragment — see
+  fragment_designer_prompt.py), the renderUI action's dataMap MUST include "Filters":
+  "object::Filters" so that round-trip actually has data to send. Omitting it silently breaks the
+  fragment's persisted-filter-state pattern even though everything else looks correct.
+- A single-row aggregate (e.g. a transformTable with no groupBy field, guaranteed exactly one
+  output row) meant to feed KPI tiles should be exposed as direct scalars via row-0 dot-path
+  extraction in the renderUI dataMap — "TotalTasksKpi": "object::taskKpis.0.TotalTasks" — not as
+  a listOfMap bound to an invented object path like "KPI.TotalTasks" that the flow never produces.
 
 SERVICE RULES
 ────────────────────────────────────────────────────────────

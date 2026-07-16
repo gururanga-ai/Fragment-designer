@@ -953,10 +953,16 @@ function TabGroupConfigEditor({ node, updateNode }) {
       const existing = items.find(it => it?.Container === 'filter-panel' || it?.Element === 'filter-panel')
       const fp = existing ? JSON.parse(JSON.stringify(existing)) : {
         Element: 'filter-panel',
-        // showFooter/showApplyButton/showClearButton are NOT part of this platform's filter-panel
-        // schema — a fragment carrying them gets rejected at publish time with "Invalid data for
-        // the field Content" (fwe::10013). Config holds only Sections + Position.
-        Config: { Position: position, Sections: [{ Type: 'Object', SectionName: 'Filters', Attributes: [] }] }
+        // showFooter/showApplyButton/showClearButton ARE required — without them the component
+        // renders no footer, so there is no Apply/Clear button (confirmed against real
+        // Composer-accepted working agent exports).
+        Config: {
+          Position: position,
+          Sections: [{ Type: 'Object', SectionName: 'Filters', Attributes: [] }],
+          showFooter: true,
+          showApplyButton: true,
+          showClearButton: true,
+        }
       }
       if (!fp.Config) fp.Config = {}
       fp.Config.Position = position
