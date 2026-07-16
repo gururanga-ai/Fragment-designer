@@ -278,18 +278,31 @@ function TreeItem({ item, selected, onClick }) {
 }
 
 // ── Insert Node dialog ───────────────────────────────────────────────────
-function InsertNodeDialog({ slotNames, onInsert, onClose }) {
+// mode "child": slotNames is the fixed list of the ALREADY-SELECTED node's own Slots (new node
+// goes inside one of them). mode "parent": there's no existing wrapper yet, so the available
+// slots depend on whichever template the user picks — recomputed from AF_NEW_NODES[nodeType]
+// each time nodeType changes, and that's the slot the selected node moves into.
+function InsertNodeDialog({ mode = 'child', slotNames, onInsert, onClose }) {
   const [nodeType, setNodeType] = useState('flex-col')
   const [title, setTitle] = useState('')
-  const [slot, setSlot] = useState(slotNames.includes('Default') ? 'Default' : slotNames[0] || 'Default')
+  const effectiveSlotNames = mode === 'parent'
+    ? Object.keys(AF_NEW_NODES[nodeType]?.Slots || {})
+    : slotNames
+  const [slot, setSlot] = useState(effectiveSlotNames.includes('Default') ? 'Default' : effectiveSlotNames[0] || 'Default')
+
+  const handleNodeTypeChange = t => {
+    setNodeType(t)
+    const next = mode === 'parent' ? Object.keys(AF_NEW_NODES[t]?.Slots || {}) : slotNames
+    setSlot(next.includes('Default') ? 'Default' : next[0] || 'Default')
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-lg shadow-xl w-80 p-5 space-y-3">
-        <p className="text-sm font-bold text-[#1E3A8A]">Add Container Node</p>
+        <p className="text-sm font-bold text-[#1E3A8A]">{mode === 'parent' ? 'Wrap in New Parent Container' : 'Add Container Node'}</p>
         <div>
           <label className="text-xs font-semibold text-[#374151] block mb-1">Node Type</label>
-          <select value={nodeType} onChange={e => setNodeType(e.target.value)}
+          <select value={nodeType} onChange={e => handleNodeTypeChange(e.target.value)}
             className="w-full border rounded px-2 py-1.5 text-xs bg-white focus:outline-none focus:border-[#2563EB]">
             {Object.keys(AF_NEW_NODES).map(k => <option key={k} value={k}>{k}</option>)}
           </select>
@@ -299,18 +312,22 @@ function InsertNodeDialog({ slotNames, onInsert, onClose }) {
           <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="My Container"
             className="w-full border rounded px-2 py-1 text-xs focus:outline-none focus:border-[#2563EB]" />
         </div>
-        {slotNames.length > 1 && (
+        {effectiveSlotNames.length > 1 && (
           <div>
-            <label className="text-xs font-semibold text-[#374151] block mb-1">Add to Slot</label>
+            <label className="text-xs font-semibold text-[#374151] block mb-1">
+              {mode === 'parent' ? 'Put selected node in slot' : 'Add to Slot'}
+            </label>
             <select value={slot} onChange={e => setSlot(e.target.value)}
               className="w-full border rounded px-2 py-1.5 text-xs bg-white focus:outline-none focus:border-[#2563EB]">
-              {slotNames.map(s => <option key={s} value={s}>{s}</option>)}
+              {effectiveSlotNames.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
         )}
         <div className="flex gap-2 pt-1">
           <button onClick={() => onInsert(nodeType, title, slot)}
-            className="flex-1 py-1.5 text-xs bg-[#1E3A8A] text-white rounded font-semibold hover:bg-[#1E40AF]">Add ✓</button>
+            className="flex-1 py-1.5 text-xs bg-[#1E3A8A] text-white rounded font-semibold hover:bg-[#1E40AF]">
+            {mode === 'parent' ? 'Wrap ✓' : 'Add ✓'}
+          </button>
           <button onClick={onClose} className="px-4 py-1.5 text-xs bg-[#F1F5F9] text-[#374151] rounded">Cancel</button>
         </div>
       </div>
@@ -610,6 +627,7 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
   const [jsonErr, setJsonErr] = useState('')
   const [saved, setSaved] = useState(false)
   const [showInsert, setShowInsert] = useState(false)
+  const [showWrap, setShowWrap] = useState(false)
   const [rightPanel, setRightPanel] = useState('preview') // 'preview' | 'diff'
   const [maximized, setMaximized] = useState(false)
   const [gleanOpen, setGleanOpen] = useState(false)
@@ -780,6 +798,41 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
     setShowInsert(false)
   }
 
+  // Inserts a new container BETWEEN the selected node and its current parent — the selected node
+  // (or, if nothing is selected, the whole root) becomes a child of the new wrapper, and the
+  // wrapper takes over the exact spot the selected node used to occupy.
+  const wrapNode = (templateKey, title, slotName) => {
+    const tpl = AF_NEW_NODES[templateKey]
+    if (!tpl) return
+    const newParent = JSON.parse(JSON.stringify(tpl))
+    if (title.trim()) {
+      if (!newParent.Config) newParent.Config = {}
+      newParent.Config.title = title.trim()
+    }
+    if (!newParent.Slots) newParent.Slots = {}
+    if (!newParent.Slots[slotName]) newParent.Slots[slotName] = []
+
+    if (selPath.length === 0) {
+      // Wrapping the whole fragment — the new parent becomes the root.
+      newParent.Slots[slotName].push(structuredClone(frag))
+      setFrag(newParent)
+      setShowWrap(false)
+      return
+    }
+
+    const newFrag = structuredClone(frag)
+    const idx = selPath[selPath.length - 1]
+    if (typeof idx !== 'number') return
+    const slotArr = getByPath(newFrag, selPath.slice(0, -1))
+    if (!Array.isArray(slotArr)) return
+    newParent.Slots[slotName].push(slotArr[idx])
+    slotArr[idx] = newParent
+    setFrag(newFrag)
+    // selPath still resolves to the same position, which now holds the new wrapper — selecting
+    // it lets the user immediately style/configure the container they just added.
+    setShowWrap(false)
+  }
+
   const deleteNode = () => {
     if (selPath.length === 0) return
     const label = selNode?.Container || selNode?.Element || 'this node'
@@ -815,6 +868,9 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
     <Modal title="Align Fix — CSS Layout Editor" onClose={onClose} width="max-w-7xl" maximized={maximized} onMaximize={() => setMaximized(m => !m)} resizable defaultWidth={1100} defaultHeight={640}>
       {showInsert && selSlotNames.length > 0 && (
         <InsertNodeDialog slotNames={selSlotNames} onInsert={insertNode} onClose={() => setShowInsert(false)} />
+      )}
+      {showWrap && (
+        <InsertNodeDialog mode="parent" slotNames={[]} onInsert={wrapNode} onClose={() => setShowWrap(false)} />
       )}
       <div className="flex" style={{ height: maximized ? 'calc(100vh - 110px)' : '100%' }}>
         {/* ── Left: Tree ── */}
@@ -866,6 +922,10 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
                 ➕ Add Child
               </button>
             )}
+            <button onClick={() => setShowWrap(true)} title="Insert a new container between this node and its parent"
+              className="text-xs px-2 py-0.5 bg-[#1E3A8A] text-[#93C5FD] rounded hover:bg-[#1E40AF]">
+              ⬆ Add Parent
+            </button>
             {selPath.length > 0 && typeof selPath[selPath.length - 1] === 'number' && (
               <>
                 <span className="w-px self-stretch bg-[#3B5998] mx-1" />
