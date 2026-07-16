@@ -223,7 +223,18 @@ table — data table CONTAINER (not an element — confirmed from real working f
     transformTable's targetFieldName list), never invent one.
   - For a column with a percentage/suffix value: Slots.Default[0].Config.postValueSeparator = "%"
   - For an action/icon column (e.g. an insights button), Slots.Default[0].Element is "action-button" instead of "key-value"
-  - Config.PaginationConfig = { "Paginate": true, "Size": [10,25,50,100], "Slot": "footer" } for pagination
+  - Pagination is NEVER a "PaginationConfig" key inside the table's own Config — a working platform
+    fragment (confirmed against real Composer-accepted exports) rejects that with "Invalid data for
+    the field Content" (fwe::10013) at publish/save time. Pagination is a SEPARATE sibling node
+    placed right after the table, not a property of it:
+    {
+      "Container": "footer-container",
+      "Slots": { "Footer": [
+        { "Container": "footer", "Input": "map(*)", "Config": {
+            "PaginationConfig": { "Paginate": true, "Size": [10, 25, 50, 100], "Slot": "footer" }
+          }, "Slots": {} }
+      ] }
+    }
   - Config.showExportButton — optional top-level table toggle
   - Never use "columns" (lowercase), "field"/"title", or "Header"/"Accessor" — those are not this
     platform's schema and will not render
@@ -269,13 +280,19 @@ filter-panel — REAL filter sidebar panel, with its own concrete schema (confir
             }
           ]
         }
-      ],
-      "showFooter": true, "showApplyButton": true, "showClearButton": true
+      ]
     }
   }
   - Each Attribute's "Input" is the variable/field name the filter writes to when the user
     interacts with it — this is what a downstream renderUI dataMap or flow action reads via
     {:Filters.BatchId} etc., NOT a free-floating display value
+  - filter-panel Config holds ONLY "Sections" (plus the standard Style/UID wrappers) — never add
+    "showFooter", "showApplyButton", or "showClearButton". Those are not part of this platform's
+    filter-panel schema; a fragment carrying them gets rejected at publish/save time with "Invalid
+    data for the field Content" (fwe::10013), confirmed against real Composer-accepted exports.
+  - "Sections" belongs on filter-panel ONLY — never put a "Sections" array in a button's Config
+    (or any other element type). A button's Config only carries button/action fields (LabelKey,
+    variant, prefixName, actionKey, etc.); filters always live under a filter-panel element.
   - filter-panel is normally the sole child of a flyout-card container (see flyout-card above) in
     a sidebar's Left slot, toggled via a header button's OnClick -> toggle-filter event
 button — action button

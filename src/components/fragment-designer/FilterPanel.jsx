@@ -46,10 +46,10 @@ export function buildFilterElement(filterSections) {
   })
   return {
     Element: 'filter-panel',
+    // showFooter/showApplyButton/showClearButton are NOT part of this platform's filter-panel
+    // schema — a fragment carrying them gets rejected at publish/save time with "Invalid data for
+    // the field Content" (fwe::10013), confirmed against real Composer-accepted exports.
     Config: {
-      showFooter: true,
-      showApplyButton: true,
-      showClearButton: true,
       Sections: sections,
     },
   }
@@ -449,13 +449,16 @@ export function SlotFilterEditor({ fpNode, onChange, varPool = {} }) {
   const apply = (sections) => {
     setLocalSections(sections)
     const built = buildFilterElement(sections)
-    // Merge back into the existing fpNode to preserve unrecognized fields
+    // Merge back into the existing fpNode to preserve unrecognized fields — but drop
+    // showFooter/showApplyButton/showClearButton if a legacy/imported fragment already had them;
+    // they're not part of this platform's filter-panel schema and get rejected at publish time
+    // with "Invalid data for the field Content" (fwe::10013), so any edit here also cleans them up.
+    const { showFooter, showApplyButton, showClearButton, ...cleanConfig } = fpNode?.Config || {}
     const merged = {
       ...fpNode,
       Element: fpNode?.Element || 'filter-panel',
       Config: {
-        ...(fpNode?.Config || {}),
-        showFooter: true, showApplyButton: true, showClearButton: true,
+        ...cleanConfig,
         Sections: built.Config.Sections,
       },
     }

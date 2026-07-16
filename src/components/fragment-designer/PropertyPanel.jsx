@@ -953,8 +953,10 @@ function TabGroupConfigEditor({ node, updateNode }) {
       const existing = items.find(it => it?.Container === 'filter-panel' || it?.Element === 'filter-panel')
       const fp = existing ? JSON.parse(JSON.stringify(existing)) : {
         Element: 'filter-panel',
-        Config: { showFooter: true, showApplyButton: true, showClearButton: true,
-          Position: position, Sections: [{ Type: 'Object', SectionName: 'Filters', Attributes: [] }] }
+        // showFooter/showApplyButton/showClearButton are NOT part of this platform's filter-panel
+        // schema — a fragment carrying them gets rejected at publish time with "Invalid data for
+        // the field Content" (fwe::10013). Config holds only Sections + Position.
+        Config: { Position: position, Sections: [{ Type: 'Object', SectionName: 'Filters', Attributes: [] }] }
       }
       if (!fp.Config) fp.Config = {}
       fp.Config.Position = position
@@ -1949,12 +1951,6 @@ function TableConfigEditor({ node, cfg, sty, updateNode, ensureInsightHost, varP
           <label htmlFor="tbl-footer" className="text-xs font-semibold text-[#374151]">Pagination Footer</label>
         </div>
       </div>
-      <Field label="Pagination Page Size">
-        <input type="number" value={cfg.PaginationConfig?.PageSize || ''} placeholder="50"
-          onChange={e => setField('Config.PaginationConfig.PageSize', parseInt(e.target.value) || 50)}
-          className="w-full border rounded px-2 py-1 text-xs focus:outline-none focus:border-[#2563EB]" />
-      </Field>
-
       <SectionHdr label="AI / Agentic Actions" />
       <div className="space-y-1.5">
         <div className="flex items-center gap-2">
