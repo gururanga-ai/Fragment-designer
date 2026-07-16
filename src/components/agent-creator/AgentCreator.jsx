@@ -132,12 +132,14 @@ export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHa
     } catch { /* localStorage unavailable/full — backup is best-effort, never block the app on it */ }
   }, [config, flows, contents])
 
-  // Listen for fragment-saved-to-agent events from FragmentDesigner
+  // Listen for fragment-saved-to-agent events from FragmentDesigner. contentStr arrives already
+  // built via restoreTemplateVars (same as Copy Fragment/Export) — re-stringifying a raw fragment
+  // object here would re-introduce double-quoted "{:VarName}" instead of the platform's real
+  // unquoted {:VarName} syntax, so this must use the string as given, not rebuild it.
   useEffect(() => {
     const handler = (e) => {
-      const { name, fragment } = e.detail || {}
-      if (!name || !fragment) return
-      const contentStr = JSON.stringify({ Fragment: fragment }, null, 2)
+      const { name, contentStr } = e.detail || {}
+      if (!name || !contentStr) return
       // Update content item Content field
       setContents(prev => prev.map(c =>
         (c.Name || c.name) === name ? { ...c, Content: contentStr } : c

@@ -393,7 +393,15 @@ export default function FragmentDesigner({ varPool, setVarPool, varSchemas = {},
         return null
       }
       const direct = tryParse(rawContent)
-      const sanitized = direct || tryParse(rawContent.replace(/\{:\w+\}/g, 'null'))
+      // cleanJson wraps unquoted {:VarName} template placeholders in quotes so JSON.parse can
+      // read them WITHOUT destroying the variable name — this is what Import/Paste already use.
+      // The previous fallback here replaced every {:VarName} with the literal string "null"
+      // instead, permanently discarding every template binding in the fragment (Payload values,
+      // DataSourcePath references, etc.) the moment "Edit in Designer" was used — the data
+      // silently stopped populating downstream with no way to recover it, since by the time the
+      // user got here the binding was already gone. Only fall back to the destructive null-replace
+      // as a last resort if even the quote-wrapped version still fails to parse.
+      const sanitized = direct || tryParse(cleanJson(rawContent)) || tryParse(rawContent.replace(/\{:\w+\}/g, 'null'))
       if (sanitized) {
         fragData = sanitized
       } else {
@@ -666,8 +674,15 @@ export default function FragmentDesigner({ varPool, setVarPool, varSchemas = {},
               onClick={() => {
                 const fragObj = exportFragmentObj
                 if (!fragObj) return
+                // Must go through restoreTemplateVars exactly like "Copy Fragment"/Export does —
+                // otherwise {:VarName} template placeholders (stored internally as the plain JSON
+                // string "{:VarName}" so JSON.parse/stringify can round-trip them) stay
+                // double-quoted in the saved Content instead of the platform's real unquoted
+                // {:VarName} syntax, which silently breaks data population for anything bound to
+                // that variable (e.g. filter-panel OnApply Payload values).
+                const contentStr = restoreTemplateVars(JSON.stringify({ Fragment: fragObj }, null, 2))
                 window.dispatchEvent(new CustomEvent('fragment-saved-to-agent', {
-                  detail: { name: handoffSourceName, fragment: fragObj }
+                  detail: { name: handoffSourceName, contentStr }
                 }))
                 alert(`Fragment saved back to "${handoffSourceName}" in Agent Creator.`)
               }}
