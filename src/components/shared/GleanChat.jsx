@@ -180,7 +180,7 @@ export default function GleanChat({
       const isNonEmptyVarPool = varPool && typeof varPool === 'object' && Object.keys(varPool).length > 0
       const args = mode === 'agent'
         ? { prompt, uploadedFileIds, fragment_json: isNonEmptyFrag ? fragmentJson : {}, issues: [], selected_node: selectedNode, var_pool: isNonEmptyVarPool ? varPool : {}, conversation: history.map(m => ({ role: m.role, text: m.text })), useDeepResearch: deepResearch, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
-        : { conversation: newHistory, chatId, agent_context: currentFlow || null, useDeepResearch: deepResearch, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
+        : { conversation: newHistory, chatId, agent_context: currentFlow || null, uploadedFileIds, useDeepResearch: deepResearch, onPartial: t => { full = t; setPartialText(t) }, signal: abortRef.current.signal }
 
       await fn(args)
       setPartialText('')

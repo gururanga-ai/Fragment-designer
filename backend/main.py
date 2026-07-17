@@ -224,6 +224,7 @@ class ChatRequest(BaseModel):
     conversation: list[ChatMessage]
     chatId: str | None = None
     agent_context: dict | None = None
+    uploadedFileIds: list[str] = Field(default_factory=list)
     useDeepResearch: bool = False
     mode: str = "agent_creator"  # "agent_creator" (default, CONFIG/FLOW/FRAGMENT JSON modes) | "enhance" (plain-text research rewrite, no JSON)
 
@@ -328,6 +329,13 @@ def _build_chat_body(req: ChatRequest) -> dict[str, Any]:
             "messageType": "CONTENT",
             "ts": now,
         })
+
+    # Attach uploaded files to the newest USER message — confirmed via real Glean HAR capture,
+    # a message carries its attachments as a sibling "uploadedFileIds" list on the message object
+    # itself (messages[-1]), not as a top-level request field. Without this, files upload
+    # successfully and get a real fileId back, but Glean never actually sees/analyzes them.
+    if req.uploadedFileIds and messages and messages[-1]["author"] == "USER":
+        messages[-1]["uploadedFileIds"] = req.uploadedFileIds
 
     body: dict[str, Any] = {
         "agentConfig": {
@@ -463,6 +471,13 @@ def _build_agent_body(req: AgentRequest) -> dict[str, Any]:
         "messageType": "CONTENT",
         "ts": now,
     })
+
+    # Attach uploaded files to this final USER message — confirmed via real Glean HAR capture,
+    # a message carries its attachments as a sibling "uploadedFileIds" list on the message object
+    # itself, not as a top-level request field. Without this, files upload successfully and get a
+    # real fileId back, but Glean never actually sees/analyzes them in the response.
+    if req.uploadedFileIds:
+        messages[-1]["uploadedFileIds"] = req.uploadedFileIds
 
     body: dict[str, Any] = {
         "agentConfig": {
