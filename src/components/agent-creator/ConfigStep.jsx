@@ -6,6 +6,55 @@ import { extractJson } from '../../utils/agentBuilder'
 
 const LIFECYCLE_OPTS = ['GENERAL_AVAILABILITY', 'BETA', 'ALPHA', 'DEPRECATED']
 
+// Layout archetypes offered in Full Autofill's layout-picker step — patterns confirmed against
+// real reference fragments (References/*.json: MHE Dashboard, ticket/fulfillment agents, etc.).
+// "blueprint" is fed directly into fragment GENERATION MODE as a concrete container/slot spec so
+// the model has an actual structural target instead of inferring layout from prose alone.
+const LAYOUT_OPTIONS = [
+  {
+    id: 'table-filters',
+    icon: '📋',
+    label: 'Table + Filters',
+    desc: 'Sidebar filter panel + single data table. Best for a simple record list/search.',
+    blueprint: 'A sidebar Left slot holding a flyout-card (Config.hideFlyoutCardByDefault:true) that contains a filter-panel (Config.showFooter/showApplyButton/showClearButton:true), toggled via a header-action bar button (OnClick -> toggle-filter, wired to the flyout-card\'s ToggleFlyout listener). Main content: one card containing a single table bound to the primary dataset, with sortable/filterable columns matching the flow\'s transformTable output field names. Fragment root (or shared ancestor above both filter-panel and table) carries Init: {Type: "agentic-api", DefaultValues: {Filters: {:Filters}}}.',
+  },
+  {
+    id: 'kpi-charts-table',
+    icon: '📊',
+    label: 'KPI + Charts + Table',
+    desc: 'KPI tiles row, one or two charts, and a detail table below — the standard analytics dashboard.',
+    blueprint: 'Same sidebar filter-panel pattern as Table + Filters. Main content column: a grid row of 2-4 KPI tiles (each a card containing two key-value elements — a small label row and a large bold value row bound to a scalar), then one or two chart cards (line/bar, Init: {Type:"value-array", DataSourcePath:"<key>"}) bound to aggregated data, then a detail table card below bound to the row-level dataset. All under one shared filtering Init ancestor.',
+  },
+  {
+    id: 'tabbed-dashboard',
+    icon: '🗂️',
+    label: 'Tabbed Dashboard',
+    desc: 'Multiple views in tabs, each with its own charts/KPIs/table — for agents covering several related breakdowns.',
+    blueprint: 'Same sidebar filter-panel pattern. Main content area is a tab-group container with 2 or more tabs (preserve real tab names matching the distinct breakdowns the agent covers); each tab\'s slot holds its own KPI/chart/table combination relevant to that tab specifically, all still descendants of the one shared filtering Init ancestor so the sidebar filter affects every tab.',
+  },
+  {
+    id: 'card-grid',
+    icon: '🗃️',
+    label: 'Card / List Grid',
+    desc: 'Repeating card list bound to a dataset — for browsing many similar records without a strict table grid.',
+    blueprint: 'A grid container of repeating card nodes bound to a listOfMap dataset (one card per row), each card showing a few key-value fields for that record. Optional filter-panel sidebar using the same pattern as Table + Filters. Optional small KPI/chart summary row above the grid.',
+  },
+  {
+    id: 'master-detail',
+    icon: '🔍',
+    label: 'Master-Detail / Flyout',
+    desc: 'Table with row-click opening a detail flyout panel — for ticket/record drill-down.',
+    blueprint: 'A sidebar container: Left slot has the filter-panel pattern from Table + Filters; main content is a table with an action-button "Insights" column (Events.Triggers.OnClick -> {EventId:"push-details-flyout", ContainerId:"details-button"}); sidebar Right slot has a stack host (Config.MaxSize, Events.Listeners.Push/Pop wired to push-details-flyout/close-details-flyout) rendering the selected record\'s detail fields when opened.',
+  },
+  {
+    id: 'none',
+    icon: '💬',
+    label: 'No Fragment (Conversational)',
+    desc: 'No UI — the agent answers in chat only. Skips fragment generation entirely.',
+    blueprint: null,
+  },
+]
+
 function Field({ label, children, hint }) {
   return (
     <div className="flex items-start gap-3 py-2">
@@ -170,10 +219,12 @@ export default function ConfigStep({
     }
   }
 
-  const runFullAutofill = async (desc, deepResearch, setStatus, onDone) => {
+  const runFullAutofill = async (desc, deepResearch, layoutChoice, setStatus, onDone) => {
     // New autofill = new Glean context
     onGleanChatIdChange(null)
     onGleanHistoryChange([])
+
+    const noFragment = layoutChoice?.id === 'none'
 
     let configApplied = 0, flowApplied = 0
     let latestAgentId = config.agentId
@@ -185,6 +236,7 @@ export default function ConfigStep({
     setStatus('⏳ Step 1/3: Generating configuration...')
     try {
       const configPrompt = `Autofill this agent — configure agent properties for: ${desc}`
+        + (noFragment ? ' This must be a conversational, chat-only agent with no dashboard/UI — set conversational: true.' : '')
       let configText = ''
       await gleanChat({ conversation: [{ role: 'user', text: configPrompt }], useDeepResearch: deepResearch, onPartial: t => { configText = t } })
       const configData = extractJson(configText)
@@ -209,10 +261,16 @@ export default function ConfigStep({
     setStatus('⏳ Step 2/3: Generating flow actions...')
     let flowData = null
     try {
-      const conversationalNote = latestConversational
+      const conversationalNote = (noFragment || latestConversational)
         ? ' This is a conversational, chat-only agent — do NOT include a renderUI action; end the flow with addDataResponse/addTextResponse/addStreamResponse instead.'
         : ''
-      const flowPrompt = `Build flow — generate actions for the default task: ${desc}${conversationalNote}`
+      // Tie flow generation to the chosen layout — the transformTable/renderUI dataMap shape
+      // needs to actually match what that layout will bind to (KPI scalars, chart series fields,
+      // table columns), not be guessed independently of the fragment that will render it.
+      const layoutNote = (!noFragment && layoutChoice?.blueprint)
+        ? ` The generated UI will use this layout: ${layoutChoice.blueprint} Shape transformTable outputs and the renderUI dataMap to match exactly what this layout needs (KPI tiles need row-0 scalar extraction, charts need named series fields, tables need column-matching field names).`
+        : ''
+      const flowPrompt = `Build flow — generate actions for the default task: ${desc}${conversationalNote}${layoutNote}`
       let flowText = ''
       await gleanChat({ conversation: [{ role: 'user', text: flowPrompt }], useDeepResearch: deepResearch, onPartial: t => { flowText = t } })
       flowData = extractJson(flowText)
@@ -236,22 +294,10 @@ export default function ConfigStep({
 
     // Call 3: actually generate the fragment UI (not just a placeholder) + link renderUI + make
     // it visible in Fragment Designer without forcing a tab switch away from this review screen.
+    // Whether this step runs at all is now decided by the user's explicit layout-picker choice
+    // (including "No Fragment") rather than a fuzzy soft/hard-UI-word regex guess over the prompt.
     const hasRenderUI = Array.isArray(flowData) && flowData.some(a => a.type === 'renderUI')
-    // Broad on purpose: "display/show X" often gets flow-generated as a chat data response
-    // (addDataResponse) rather than a renderUI action, since that's a valid conversational-agent
-    // answer too — but a user asking to "display"/"show" something usually wants an actual
-    // rendered UI, not just raw data in the chat reply, so treat these as a fragment request too.
-    // EXCEPT when the user (via Step 1's own CONFIG MODE response) explicitly asked for a
-    // conversational agent — in that case only the hard UI-specific terms count. Without this,
-    // "conversational: true" was silently overridden every time: almost any agent description
-    // touches a soft word like "shows"/"display"/"report" somewhere, so this regex was forcing a
-    // renderUI + fragment onto agents the user explicitly asked to be chat-only.
-    const softUiWords = /display|shows?\b|showing|report/i
-    const hardUiWords = /fragment|render\s*ui|dashboard|ui\s*layout|screen|table|grid|chart|card/i
-    const wantsFragment = latestConversational
-      ? hardUiWords.test(desc)
-      : (hardUiWords.test(desc) || softUiWords.test(desc))
-    if (hasRenderUI || wantsFragment) {
+    if (!noFragment && (hasRenderUI || layoutChoice)) {
       // If the flow step's renderUI action already names an inputJSON, that name IS the contract —
       // it must be used as-is, or the flow references a content item that doesn't exist. Inventing
       // a different name here (as this used to do) produces a mismatch: renderUI.inputJSON points
@@ -260,23 +306,16 @@ export default function ConfigStep({
       const rawId = (latestAgentId || '').replace(/^ext-/, '') || (latestAgentName || '').replace(/\s+/g, '') || 'agent'
       const derivedName = rawId.charAt(0).toUpperCase() + rawId.slice(1) + 'Fragment'
       const contentName = existingRenderUI?.inputJSON || derivedName
-      let layoutIntent = desc
+      // The user already picked a concrete layout in the picker step — go straight to that
+      // blueprint instead of making a separate "suggest a layout" round trip first.
+      let layoutIntent = layoutChoice?.blueprint
+        ? `${desc}\n\nRequired layout pattern (user-selected: ${layoutChoice.label}): ${layoutChoice.blueprint}`
+        : desc
       let generatedFragment = null
 
-      setStatus('⏳ Step 3/3: Designing fragment layout...')
+      setStatus('⏳ Step 3/3: Generating fragment layout...')
       try {
-        // First pass: turn the (possibly vague) description into a concrete, specific layout
-        // intent — container types, data bindings, filters, columns — GENERATION MODE below
-        // relies on this level of detail to produce a real fragment rather than a stub.
-        const fragPrompt = `Create fragment UI — suggest a fragment layout for this agent: ${desc}`
-        let fragText = ''
-        await gleanChat({ conversation: [{ role: 'user', text: fragPrompt }], useDeepResearch: deepResearch, onPartial: t => { fragText = t } })
-        const fragData = extractJson(fragText)
-        if (fragData?.mode === 'fragment_handoff' && fragData.payload?.user_prompt) {
-          layoutIntent = fragData.payload.user_prompt
-        }
-
-        // Second pass: actually generate the fragment JSON (ALIGN_FIX_SYSTEM GENERATION MODE —
+        // Actually generate the fragment JSON (ALIGN_FIX_SYSTEM GENERATION MODE —
         // triggered by an empty fragment_json), instead of leaving a Content:'{}' stub that only
         // got filled in if the user separately clicked "Edit in Designer" and waited for Glean.
         // Generation is observed to occasionally return non-fragment output (suggestions/prose)
@@ -536,7 +575,7 @@ export default function ConfigStep({
       {autofillOpen && (
         <FullAutofillModal
           onClose={() => { setAutofillOpen(false); setAutofillStatus('') }}
-          onRun={(desc, deepResearch, setStatus, onDone) => runFullAutofill(desc, deepResearch, setStatus, onDone)}
+          onRun={(desc, deepResearch, layoutChoice, setStatus, onDone) => runFullAutofill(desc, deepResearch, layoutChoice, setStatus, onDone)}
         />
       )}
     </div>
@@ -572,11 +611,20 @@ function FullAutofillModal({ onClose, onRun }) {
   const [deepResearch, setDeepResearch] = useState(false)
   const [enhancing, setEnhancing] = useState(false)
   const [enhanced, setEnhanced] = useState(false)
+  const [layoutPickerOpen, setLayoutPickerOpen] = useState(false)
 
+  // "Run Autofill" no longer generates a fragment blind — it first asks the user to pick a
+  // concrete layout (or "No Fragment"), and that choice drives both flow shaping and fragment
+  // generation downstream instead of a fuzzy word-guess over the prompt text.
   const handleRun = () => {
     if (!desc.trim() || running) return
+    setLayoutPickerOpen(true)
+  }
+
+  const handleLayoutChosen = (layoutChoice) => {
+    setLayoutPickerOpen(false)
     setRunning(true)
-    onRun(desc.trim(), deepResearch, setStatus, () => { setRunning(false); onClose() })
+    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => { setRunning(false); onClose() })
   }
 
   const handleEnhance = async () => {
@@ -644,7 +692,7 @@ function FullAutofillModal({ onClose, onRun }) {
           disabled={!desc.trim() || enhancing || running}
           className="w-full text-xs px-3 py-2 bg-[#F3E8FF] text-[#6B21A8] rounded font-semibold hover:bg-[#E9D5FF] disabled:opacity-50 disabled:cursor-not-allowed border border-[#D8B4FE]"
         >
-          {enhancing ? '🔎 Researching Confluence, Bitbucket, entity knowledge…' : '✨ Enhance Prompt (research company knowledge)'}
+          {enhancing ? '🔎 Researching Confluence, Bitbucket, Jira, Salesforce…' : '✨ Enhance Prompt (research company knowledge)'}
         </button>
         {status && (
           <div className={`rounded px-3 py-2 text-xs font-medium ${status.startsWith('✓') ? 'bg-[#DCFCE7] text-[#166534]' : status.startsWith('⚠') || status.includes('Error') ? 'bg-[#FEE2E2] text-[#991B1B]' : 'bg-[#DBEAFE] text-[#1E3A8A]'}`}>
@@ -664,6 +712,52 @@ function FullAutofillModal({ onClose, onRun }) {
           </button>
           <span className="text-xs text-[#94A3B8] ml-auto">Ctrl+Enter to run</span>
         </div>
+      </div>
+      {layoutPickerOpen && (
+        <LayoutPickerModal
+          onClose={() => setLayoutPickerOpen(false)}
+          onChoose={handleLayoutChosen}
+        />
+      )}
+    </Modal>
+  )
+}
+
+function LayoutPickerModal({ onClose, onChoose }) {
+  return (
+    <Modal title="Choose a UI Layout" onClose={onClose} width="max-w-2xl">
+      <div className="p-4">
+        <p className="text-sm text-[#374151] mb-3">
+          Pick the layout that best matches what this agent should show. Glean will design the flow and fragment to match it.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {LAYOUT_OPTIONS.filter(o => o.id !== 'none').map(o => (
+            <button
+              key={o.id}
+              onClick={() => onChoose(o)}
+              className="text-left border border-[#CBD5E1] rounded-lg p-3 hover:border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-lg">{o.icon}</span>
+                <span className="text-sm font-semibold text-[#111827]">{o.label}</span>
+              </div>
+              <p className="text-xs text-[#64748B]">{o.desc}</p>
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => onChoose(LAYOUT_OPTIONS.find(o => o.id === 'none'))}
+          className="w-full text-left border border-dashed border-[#94A3B8] rounded-lg p-3 mt-2 hover:border-[#475569] hover:bg-[#F1F5F9] transition-colors"
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-lg">💬</span>
+            <span className="text-sm font-semibold text-[#111827]">No Fragment (Conversational)</span>
+          </div>
+          <p className="text-xs text-[#64748B]">No UI — the agent answers in chat only. Skips fragment generation entirely.</p>
+        </button>
+        <button onClick={onClose} className="mt-3 px-4 py-2 bg-[#F1F5F9] text-[#374151] rounded text-sm hover:bg-[#E2E8F0]">
+          Cancel
+        </button>
       </div>
     </Modal>
   )
