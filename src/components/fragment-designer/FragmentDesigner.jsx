@@ -23,7 +23,7 @@ const EMPTY_FRAGMENT = {
 // between a crash and losing unsaved fragment work. Written after every successful render.
 export const FRAGMENT_DESIGNER_BACKUP_KEY = 'mawm_fragment_designer_backup'
 
-function cleanJson(str) {
+export function cleanJson(str) {
   // Strip BOM + invisible/zero-width Unicode chars
   str = str.replace(/[﻿​‌‍‎‏￾]/g, '').trim()
   // Strip JS comments
@@ -37,7 +37,7 @@ function cleanJson(str) {
 }
 
 // Restore {: template vars } to unquoted form in final JSON string output
-function restoreTemplateVars(str) {
+export function restoreTemplateVars(str) {
   return str.replace(/"\{:([^}]+)\}"/g, '{:$1}')
 }
 

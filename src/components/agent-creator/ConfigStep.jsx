@@ -3,6 +3,7 @@ import GleanChat from '../shared/GleanChat'
 import Modal from '../shared/Modal'
 import { gleanChat, gleanRunWorkflow } from '../../utils/gleanApi'
 import { extractJson } from '../../utils/agentBuilder'
+import { cleanJson, restoreTemplateVars } from '../fragment-designer/FragmentDesigner'
 
 const LIFECYCLE_OPTS = ['GENERAL_AVAILABILITY', 'BETA', 'ALPHA', 'DEPRECATED']
 
@@ -333,7 +334,13 @@ export default function ConfigStep({
             onPartial: t => { genText = t },
           })
           lastGenText = genText
-          const generated = extractJson(genText)
+          // Real fragment JSON legitimately contains bare, unquoted {:VarName} template tokens
+          // as object values (e.g. "Filters": {:Filters}) — that's the platform's real syntax,
+          // but it isn't valid standalone JSON, so a plain extractJson/JSON.parse silently fails
+          // on virtually every generated fragment (any of them using the near-universal Filters
+          // Init pattern). cleanJson (proven in FragmentDesigner.jsx for the same problem) wraps
+          // those tokens in quotes first so JSON.parse can succeed.
+          const generated = extractJson(genText) || extractJson(cleanJson(genText))
           if (generated?.Fragment) generatedFragment = generated
         }
       } catch (e) {
@@ -347,7 +354,9 @@ export default function ConfigStep({
         // fragment content is stored as 'inputs' like any other input JSON.
         AgentContentType: 'inputs',
         language: '',
-        Content: generatedFragment ? JSON.stringify(generatedFragment, null, 2) : '{}',
+        // restoreTemplateVars undoes cleanJson's quoting of {:VarName} tokens — the platform
+        // needs the bare/unquoted form, quoting was only ever a parse-time accommodation.
+        Content: generatedFragment ? restoreTemplateVars(JSON.stringify(generatedFragment, null, 2)) : '{}',
         description: layoutIntent,
       }
       if (!generatedFragment) {
