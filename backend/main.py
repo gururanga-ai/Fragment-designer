@@ -19,7 +19,7 @@ import browser_cookie3
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse, Response
+from fastapi.responses import StreamingResponse, JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from agent_creator_prompt import GLEAN_SYSTEM_PROMPT
@@ -738,7 +738,24 @@ async def stack_publish(req: StackPublishRequest):
 # `npm run dev`'s Vite dev server handles the frontend there instead.
 _dist_dir = pathlib.Path(__file__).resolve().parent.parent / "dist"
 if _dist_dir.is_dir():
-    app.mount("/", StaticFiles(directory=str(_dist_dir), html=True), name="static")
+    # index.html references hashed asset filenames (index-<hash>.js/.css) that change on every
+    # build — but the plain StaticFiles(html=True) mount sends no Cache-Control at all, so a
+    # browser's default heuristic caching can keep serving a stale index.html (and therefore a
+    # stale JS bundle) across a normal reload even after a fresh deploy. index.html itself must
+    # always be revalidated; the hashed assets underneath it are safe to cache indefinitely since
+    # a content change always produces a new filename.
+    @app.get("/", include_in_schema=False)
+    async def _serve_index():
+        return FileResponse(_dist_dir / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+    app.mount("/assets", StaticFiles(directory=str(_dist_dir / "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _spa_fallback(full_path: str):
+        candidate = _dist_dir / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_dist_dir / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 if __name__ == "__main__":
