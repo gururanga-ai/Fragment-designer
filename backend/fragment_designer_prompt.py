@@ -305,11 +305,23 @@ chart — data chart CONTAINER (not an element):
 CANONICAL SIDEBAR + FILTER + CONTENT SKELETON — MATCH EXACTLY, DOWN TO SLOT NAMES AND NESTING
 ════════════════════════════════════════════════════════════════
 Whenever a fragment needs a sidebar filter panel plus main content (a table, or a table+chart, or
-several tabbed views), use ONE of the two skeletons below as the literal structural template.
-These are confirmed real, working fragments — match their node nesting, Container types, slot
-names, and gap/spacing values EXACTLY. Do not restructure, rename slots, skip a nesting level, add
-an extra wrapper div, or invent a different shape "for simplicity" — deviating from this skeleton
-is exactly how the dead-gap/misalignment bug documented under "sidebar" in CONTAINER TYPES happens.
+several tabbed views), use ONE of the two skeletons below as the STRUCTURAL template — the
+Container types, slot names (Left/Default/Right, header-action Left/Right), and nesting depth.
+These are confirmed real, working fragments for their node shape. Do not restructure, rename
+slots, skip a nesting level, add an extra wrapper div, or invent a different shape "for
+simplicity" — deviating from this shape is exactly how the dead-gap/misalignment bug documented
+under "sidebar" in CONTAINER TYPES happens.
+
+IMPORTANT — these skeletons are STRUCTURE-only, not literal content to copy:
+- Every UID, DataSourcePath, Sections/Columns/tab-name value below is an ILLUSTRATIVE PLACEHOLDER
+  for a completely different, unrelated agent. Replace every one of them with real values that
+  actually match THIS request's filters/entity/columns — copying "MainFilterPanel",
+  "PrimaryTable", "DataSourcePath: Data", tab names, etc. verbatim into an unrelated fragment is
+  wrong the same way reusing an unrelated SQL table name would be wrong.
+- Your output must be 100% valid, parseable JSON. The skeletons below use "..." as a shorthand for
+  "more real content goes here" — never emit a literal comment, ellipsis, or angle-bracket
+  placeholder token in your actual JSON output. Every Sections/Columns/tab array must be filled
+  with real, complete, valid JSON values for the current request, not left as a placeholder marker.
 
 VARIANT 1 — filter panel + single table:
 {
@@ -335,7 +347,7 @@ VARIANT 1 — filter panel + single table:
               {
                 "Container": "flyout-card",
                 "Events": { "Listeners": { "ToggleFlyout": [ { "SourceContainerId": "HeaderActionContainer", "EventId": "toggle-filter" } ] } },
-                "Slots": { "Default": [ { "Element": "filter-panel", "UID": "MainFilterPanel", "Config": { "showFooter": true, "showApplyButton": true, "showClearButton": true, "Sections": [ /* ... */ ] } } ] }
+                "Slots": { "Default": [ { "Element": "filter-panel", "UID": "MainFilterPanel", "Config": { "showFooter": true, "showApplyButton": true, "showClearButton": true, "Sections": [ "..." ] } } ] }
               }
             ],
             "Default": [
@@ -343,7 +355,7 @@ VARIANT 1 — filter panel + single table:
                 "Container": "table",
                 "UID": "PrimaryTable",
                 "Init": { "Type": "value-array", "DataSourcePath": "Data" },
-                "Config": { "ShowFilter": true, "Columns": [ /* ... */ ] },
+                "Config": { "ShowFilter": true, "Columns": [ "..." ] },
                 "Slots": { "Default": [ { "Container": "footer-container", "Slots": { "Footer": [ { "Container": "footer", "Input": "map(*)", "Config": { "PaginationConfig": { "Paginate": true, "Size": [10,25,50,100], "Slot": "footer" } } } ] } } ] }
               }
             ],
@@ -393,13 +405,13 @@ Right-slot mode toggles:
                 "Container": "tab-group",
                 "UID": "main-tab-group",
                 "Slots": {
-                  "<Tab Name 1>": [
+                  "First Tab Name": [
                     { "Container": "flex", "Slots": { "Default": [
                       { "Container": "chart", "UID": "SomeChart", "Init": { "Type": "value-array", "DataSourcePath": "SomeChartData" } },
                       { "Container": "table", "UID": "SomeTable", "Slots": { "Default": [ { "Container": "footer-container", "Slots": { "Footer": [ { "Container": "footer" } ] } } ] } }
                     ] } }
                   ],
-                  "<Tab Name 2>": [
+                  "Second Tab Name": [
                     { "Container": "table", "UID": "AnotherTable", "Slots": { "Default": [ { "Container": "footer-container", "Slots": { "Footer": [ { "Container": "footer" } ] } } ] } }
                   ]
                 }
@@ -412,7 +424,9 @@ Right-slot mode toggles:
     }
   }
 }
-Replace "<Tab Name N>" with the agent's actual distinct views (real tab names, not placeholders).
+"First Tab Name"/"Second Tab Name" are themselves placeholders — replace both the slot keys AND
+the tab count/content with the agent's actual distinct views (real tab names matching the request,
+could be 2, 3, or more tabs; could be a single tab/no tab-group at all if there's only one view).
 Omit Slots.Right's stack if there's no drill-down flyout for this fragment.
 
 ELEMENT TYPES AND THEIR REQUIRED CONFIG

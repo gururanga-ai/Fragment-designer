@@ -431,7 +431,13 @@ sql — executes a query
 - "sql" and "where" are separate top-level fields, not one combined string
 - {:orgId} / {:nodeId} / {:dbprefix} are ambient context variables, always available
 
-REAL SQL ACTION — CONFIRMED ACCURATE, MATCH THIS LEVEL OF PRECISION, NEVER A LOWER BAR:
+REAL SQL ACTION FROM A DIFFERENT, UNRELATED AGENT — SHOWN ONLY TO ILLUSTRATE THE LEVEL OF PRECISION
+REQUIRED. This is a Batch Print Status agent's query. DO NOT reuse FW_BATCH_PRINT_STATUS, BatchId,
+BatchSize, or any other field/table name from this example for a different request's entity —
+copying this table verbatim for a request about tasks, orders, tickets, or anything else that
+isn't actually batch-print-status is exactly the fabrication this rule exists to prevent, just
+using a memorized real name instead of an invented one. Find and confirm YOUR OWN real table for
+whatever entity the CURRENT request is actually about:
 {
   "type": "sql",
   "name": "getBatchPrintStatusData",
@@ -443,15 +449,17 @@ REAL SQL ACTION — CONFIRMED ACCURATE, MATCH THIS LEVEL OF PRECISION, NEVER A L
   "outputVariableName": "batchPrintStatusTable",
   "limit": "LIMIT {:config::sql.limit}"
 }
-This is what "not fabricated" actually looks like: a real schema-prefixed table (FW_BATCH_PRINT_STATUS
-under {:dbprefix}_pickpack — an actual framework transactional entity, confirmed via company
-knowledge search, not a plausible-sounding invented name), real UPPER_SNAKE_CASE source columns
-aliased to PascalCase output fields, the standard ORG_ID/FACILITY_ID scoping pair every query
-against a facility-scoped entity needs, a conditional-WHERE-clause placeholder built by a
-stringBuilder action (never inlined ad hoc), and the standard sql.limit config reference. Every sql
-action you generate must be held to this same bar — a real, schema-prefixed, company-knowledge-
-confirmed table with real columns, not a generic invented one that merely fits the domain
-vocabulary. If you cannot find and confirm the real table for the entity being queried, say so
+What to copy from this example is the PATTERN, not the content: a real schema-prefixed table
+(under {:dbprefix}_<schema> — confirmed via company knowledge search for the entity actually being
+asked about, not a plausible-sounding invented name AND not this example's name reused
+out of context), real UPPER_SNAKE_CASE source columns aliased to PascalCase output fields matching
+THAT entity, the standard ORG_ID/FACILITY_ID scoping pair every query against a facility-scoped
+entity needs, a conditional-WHERE-clause placeholder built by a stringBuilder action (never inlined
+ad hoc), and the standard sql.limit config reference. Every sql action you generate must be held to
+this same bar — a real, schema-prefixed, company-knowledge-confirmed table matching the CURRENT
+request's entity, with real columns for that entity — not a generic invented one, and not this
+example's FW_BATCH_PRINT_STATUS reused because it happened to be the nearest concrete example
+seen. If you cannot find and confirm the real table for the entity being queried, say so
 explicitly instead of producing a query that looks like this one but is actually a guess.
 
 callService — the ONE type where input/output are genuinely populated
