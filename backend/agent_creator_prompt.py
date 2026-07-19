@@ -431,6 +431,29 @@ sql — executes a query
 - "sql" and "where" are separate top-level fields, not one combined string
 - {:orgId} / {:nodeId} / {:dbprefix} are ambient context variables, always available
 
+REAL SQL ACTION — CONFIRMED ACCURATE, MATCH THIS LEVEL OF PRECISION, NEVER A LOWER BAR:
+{
+  "type": "sql",
+  "name": "getBatchPrintStatusData",
+  "input": {},
+  "output": {},
+  "description": "Fetch batch print status rows from the framework transactional entity table for the selected batch id and date range.",
+  "sql": "SELECT BATCH_ID AS BatchId, STATUS AS Status, BATCH_SIZE AS BatchSize, FACILITY_ID AS FacilityId, CREATED_TIMESTAMP AS CreatedTimestamp, UPDATED_TIMESTAMP AS UpdatedTimestamp, PROCESS AS Process, SEQUENCE_ORDER AS SequenceOrder FROM {:dbprefix}_pickpack.FW_BATCH_PRINT_STATUS",
+  "where": " WHERE ORG_ID = '{:orgId}' AND FACILITY_ID = '{:nodeId}' {:batchPrintStatusWhereClause}",
+  "outputVariableName": "batchPrintStatusTable",
+  "limit": "LIMIT {:config::sql.limit}"
+}
+This is what "not fabricated" actually looks like: a real schema-prefixed table (FW_BATCH_PRINT_STATUS
+under {:dbprefix}_pickpack — an actual framework transactional entity, confirmed via company
+knowledge search, not a plausible-sounding invented name), real UPPER_SNAKE_CASE source columns
+aliased to PascalCase output fields, the standard ORG_ID/FACILITY_ID scoping pair every query
+against a facility-scoped entity needs, a conditional-WHERE-clause placeholder built by a
+stringBuilder action (never inlined ad hoc), and the standard sql.limit config reference. Every sql
+action you generate must be held to this same bar — a real, schema-prefixed, company-knowledge-
+confirmed table with real columns, not a generic invented one that merely fits the domain
+vocabulary. If you cannot find and confirm the real table for the entity being queried, say so
+explicitly instead of producing a query that looks like this one but is actually a guess.
+
 callService — the ONE type where input/output are genuinely populated
 {
   "type": "callService", "name": "Call API - Ticket Type Search",
