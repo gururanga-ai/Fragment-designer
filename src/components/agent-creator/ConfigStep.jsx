@@ -314,6 +314,7 @@ export default function ConfigStep({
       let generatedFragment = null
 
       setStatus('⏳ Step 3/3: Generating fragment layout...')
+      let lastGenText = ''
       try {
         // Actually generate the fragment JSON (ALIGN_FIX_SYSTEM GENERATION MODE —
         // triggered by an empty fragment_json), instead of leaving a Content:'{}' stub that only
@@ -331,6 +332,7 @@ export default function ConfigStep({
             useDeepResearch: deepResearch,
             onPartial: t => { genText = t },
           })
+          lastGenText = genText
           const generated = extractJson(genText)
           if (generated?.Fragment) generatedFragment = generated
         }
@@ -348,7 +350,14 @@ export default function ConfigStep({
         Content: generatedFragment ? JSON.stringify(generatedFragment, null, 2) : '{}',
         description: layoutIntent,
       }
-      if (!generatedFragment) errors.push('Fragment: generation returned no usable layout — open "Edit in Designer" on the renderUI card to generate manually')
+      if (!generatedFragment) {
+        // Surface what Glean actually returned instead of swallowing it — a generic "no usable
+        // layout" message gives no way to tell prose/explanation apart from truncated/malformed
+        // JSON apart from a genuine backend error, which made every real failure indistinguishable
+        // from every other one and impossible to root-cause from the UI alone.
+        const preview = (lastGenText || '(empty response)').trim().slice(0, 300)
+        errors.push(`Fragment: generation returned no usable layout. Raw response: ${preview}${lastGenText.length > 300 ? '…' : ''} — open "Edit in Designer" on the renderUI card to generate manually`)
+      }
 
       // Add/replace fragment content item (dedupe by name — a rerun shouldn't leave two copies)
       onContentsChange(prev => {
