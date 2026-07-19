@@ -302,30 +302,53 @@ chart — data chart CONTAINER (not an element):
   Config.highchartsOptions: real Highcharts config (chart/title/xAxis/yAxis/tooltip/legend/plotOptions)
   Config.dataMapping.seriesMappings: array of { seriesType, sourceDataPath, fieldMappings: {sourceField: "name"|"y"}, staticOptions: {name, color, yAxis} }
 
-SIDEBAR + FILTER + CONTENT LAYOUT — REQUIRED SHAPE
+SIDEBAR + FILTER + TABLE LAYOUT — REQUIRED SHAPE (filter panel + a single table, no charts/KPIs)
 ════════════════════════════════════════════════════════════════
-Only applies when a fragment needs a sidebar filter panel alongside main content. A plain
-table/chart/card fragment with no filter sidebar does not need this section at all.
+Applies ONLY to the simple case: a sidebar filter panel next to one main table, nothing else. A
+plain table/chart/card fragment with no filter sidebar does not need this section at all, and
+neither does any layout that also includes a chart or KPI tile — see CHART/KPI LAYOUTS below for
+those instead.
 
 Root: Container:"flex" (flexDirection:"column", gap:"0"), Slots.Default holds exactly two items in
 order:
 1. A "header-action" container with Slots.Left containing a "button" (LabelKey "Filters") whose
    OnClick trigger fires EventId "toggle-filter" targeting the header-action's own ContainerId.
-   Optionally Slots.Right for mode-toggle "segment-panel" containers.
 2. A "sidebar" container (Config.Left.Collapsible:true, css flexDirection:"column"/gap:"0") with:
    - Slots.Left: one "flyout-card" whose Events.Listeners.ToggleFlyout listens for that same
      toggle-filter EventId from the header-action's ContainerId; its own Slots.Default holds the
      filter-panel element (see filter-panel schema below).
-   - Slots.Default: the main content — either a single table, or a "tab-group" whose Slots are
-     keyed by the agent's real distinct view names, each holding its own chart/table combo.
+   - Slots.Default: the single table.
    - Slots.Right (optional, only if there's a row-detail drill-down): one "stack" container with
      Push/Pop listeners for push-details-flyout/close-details-flyout.
 
-This exact Container-type/slot-name shape is required — a hand-rolled two-column flex row instead
-of "sidebar", or skipping the header-action/flyout-card toggle wiring, is the dead-gap/misalignment
-bug documented under "sidebar" in CONTAINER TYPES above. Fill every UID, table/tab name, and data
-binding with real values for the current request — never reuse placeholder-sounding names like
-"PrimaryTable" or "MainFilterPanel" literally.
+This exact Container-type/slot-name shape is required for THIS case — a hand-rolled two-column
+flex row instead of "sidebar", or skipping the header-action/flyout-card toggle wiring, is the
+dead-gap/misalignment bug documented under "sidebar" in CONTAINER TYPES above. Fill every UID,
+table name, and data binding with real values for the current request — never reuse
+placeholder-sounding names like "PrimaryTable" or "MainFilterPanel" literally.
+
+CHART/KPI LAYOUTS — DESIGN FREELY, BUT GET THE FUNDAMENTALS RIGHT
+════════════════════════════════════════════════════════════════
+For any layout that includes a chart, a KPI tile, tabs, or a mix of these (with or without a
+filter sidebar), do NOT force the exact node shape above — decide the actual composition (how many
+charts, where KPIs sit relative to the table, whether tabs are warranted) based on what the request
+actually asks for. A filter sidebar, if included, should still follow the header-action + sidebar +
+flyout-card pattern above as the sensible default for wiring a toggleable filter panel, but the
+Default slot's content is yours to design.
+
+What is NOT optional, regardless of composition — get these exactly right every time:
+- Every chart is a "chart" Container with a real Init.DataSourcePath, real Config.highchartsOptions
+  (chart/title/xAxis/yAxis/tooltip/legend/plotOptions), and Config.dataMapping.seriesMappings whose
+  fieldMappings keys match real field names the data actually has — see "chart" in CONTAINER TYPES
+- Every KPI tile follows the card + two key-value elements pattern under KPI TILES above — never
+  "kpi-card", it doesn't exist
+- If a filter-panel is present, the shared ancestor Init contract and showFooter/showApplyButton/
+  showClearButton flags from ELEMENT TYPES still apply exactly as documented — that part is never
+  optional, whatever the rest of the layout looks like
+- Every table still needs Config.ShowFilter set correctly and real Columns per the "table" section
+  above
+A layout that gets the composition right but breaks any of these functional contracts is still a
+broken fragment — freedom on composition is not freedom on correctness.
 
 ELEMENT TYPES AND THEIR REQUIRED CONFIG
 
@@ -444,9 +467,10 @@ When fragment_json is empty:
 1. Read user_prompt carefully — extract layout pattern, data bindings, filter fields, container structure
 2. Build a complete fragment that matches the requested layout end-to-end
 3. Choose the correct root container
-3a. If the layout includes a sidebar filter panel plus main content, follow SIDEBAR + FILTER +
-    CONTENT LAYOUT — REQUIRED SHAPE above exactly (Container types and slot names, not a
-    reinterpretation). Skip this entirely for fragments with no filter sidebar.
+3a. If the layout is a filter panel next to ONE table and nothing else, follow SIDEBAR + FILTER +
+    TABLE LAYOUT — REQUIRED SHAPE above exactly. If the layout includes any chart, KPI tile, or
+    tabs, use CHART/KPI LAYOUTS — DESIGN FREELY instead: design the composition yourself, but the
+    functional contracts listed there (chart/KPI/table/filter-panel correctness) are still mandatory.
 4. Use flyout-card for sidebar filter panels when requested
 5. Use flex with flex:1 for the main content area when appropriate
 6. Bind data and filters to the variable names mentioned in user_prompt
