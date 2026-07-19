@@ -175,6 +175,41 @@ sidebar — layout container:
   - Often uses Left / Default / Right slots
   - Preserve existing slot model if already present
   - If detail flyout behavior exists, a Right slot may be required for a stack host
+  - CRITICAL: this is the ONLY correct way to build a filter-panel-on-the-left + main-content
+    two-column layout. NEVER hand-roll a substitute with Container:"flex" (flexDirection:"row")
+    holding a fixed-pixel-width child (e.g. width:"460px") for the filter column plus a flex:"1"
+    child for the content — that renders fine in a naive CSS preview but produces a large dead gap
+    between the two columns on the real Manhattan runtime, because "sidebar" has its own internal
+    layout logic for the Left/Default split that a generic flex row does not replicate. Confirmed
+    against real working fragments (a fixed-width-flex-row fragment reproduced exactly this dead-gap
+    bug; converting the same content to Container:"sidebar" fixed it with no other changes needed).
+    The real, evidenced shape (from two independent working fragments):
+    {
+      "Container": "sidebar",
+      "Config": { "Left": { "Collapsible": true } },
+      "Style": { "css": { "flexDirection": "column", "gap": "0" } },
+      "Slots": {
+        "Left": [
+          {
+            "Container": "flyout-card",
+            "Config": { "closeButtonPosition": "right" },
+            "Style": { "padding": "0px", "width": "23vw" },
+            "Slots": { "Default": [ { "Element": "filter-panel", "Style": { "width": "100%" }, "Config": { "showFooter": true, "showApplyButton": true, "showClearButton": true, "Sections": [...] } } ] }
+          }
+        ],
+        "Default": [ /* main content — table/chart/etc, normal flex:"1" container */ ],
+        "Right": [ /* optional stack host for detail flyout */ ]
+      }
+    }
+    Do not add manual fixed widths/heights to the Left slot's contents — "sidebar" sizes the Left
+    column itself; a filter-panel just needs Style.width (e.g. "23vw"), never a hardcoded px width
+    on a wrapping div.
+  - When diagnosing "there's a big empty gap/misalignment between my filter panel and the main
+    content" or "layout looks broken but the preview shows it fine": check FIRST whether the
+    two-column area uses Container:"sidebar" or a hand-rolled flex-row substitute. If it's a
+    substitute, that IS the bug — replace the whole row node with the sidebar shape above rather
+    than tweaking gap/padding/width values on the existing flex row, which cannot fix this (the
+    problem is the container type, not its CSS values)
 
 flex — flexible layout container:
   css: { "display": "flex", "flexDirection": "row|column", "flex": "1", "minHeight": "0" }
@@ -522,6 +557,13 @@ If the user provides agent flow JSON or asks about date-filter logic related to 
 - do not inline unsupported string slicing syntax inside template placeholders unless the user already confirms that syntax works in their environment
 
 VALIDATION FIX RULES
+- User reports a layout gap/misalignment between a filter panel and main content, or "layout is
+  broken but the preview looks fine" → check whether that two-column area is Container:"sidebar"
+  or a hand-rolled Container:"flex" row with a fixed-pixel-width child. A hand-rolled substitute IS
+  the bug (see the CRITICAL note under "sidebar" in CONTAINER TYPES above) — use replace_node on
+  that whole row node with the real sidebar shape, not set_props tweaks to its gap/width/padding.
+  This is a structural fix (replace_node), never a CSS-only fix (set_props), because the container
+  TYPE is wrong, not its style values
 - Flex child missing minHeight → add minHeight: 0
 - alignItems on non-flex node → remove it
 - Container missing display:flex when children rely on flex positioning → add display:flex
