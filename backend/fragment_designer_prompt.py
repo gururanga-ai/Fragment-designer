@@ -302,132 +302,30 @@ chart — data chart CONTAINER (not an element):
   Config.highchartsOptions: real Highcharts config (chart/title/xAxis/yAxis/tooltip/legend/plotOptions)
   Config.dataMapping.seriesMappings: array of { seriesType, sourceDataPath, fieldMappings: {sourceField: "name"|"y"}, staticOptions: {name, color, yAxis} }
 
-CANONICAL SIDEBAR + FILTER + CONTENT SKELETON — MATCH EXACTLY, DOWN TO SLOT NAMES AND NESTING
+SIDEBAR + FILTER + CONTENT LAYOUT — REQUIRED SHAPE
 ════════════════════════════════════════════════════════════════
-Whenever a fragment needs a sidebar filter panel plus main content (a table, or a table+chart, or
-several tabbed views), use ONE of the two skeletons below as the STRUCTURAL template — the
-Container types, slot names (Left/Default/Right, header-action Left/Right), and nesting depth.
-These are confirmed real, working fragments for their node shape. Do not restructure, rename
-slots, skip a nesting level, add an extra wrapper div, or invent a different shape "for
-simplicity" — deviating from this shape is exactly how the dead-gap/misalignment bug documented
-under "sidebar" in CONTAINER TYPES happens.
+Only applies when a fragment needs a sidebar filter panel alongside main content. A plain
+table/chart/card fragment with no filter sidebar does not need this section at all.
 
-IMPORTANT — these skeletons are STRUCTURE-only, not literal content to copy:
-- Every UID, DataSourcePath, Sections/Columns/tab-name value below is an ILLUSTRATIVE PLACEHOLDER
-  for a completely different, unrelated agent. Replace every one of them with real values that
-  actually match THIS request's filters/entity/columns — copying "MainFilterPanel",
-  "PrimaryTable", "DataSourcePath: Data", tab names, etc. verbatim into an unrelated fragment is
-  wrong the same way reusing an unrelated SQL table name would be wrong.
-- Your output must be 100% valid, parseable JSON. The skeletons below use "..." as a shorthand for
-  "more real content goes here" — never emit a literal comment, ellipsis, or angle-bracket
-  placeholder token in your actual JSON output. Every Sections/Columns/tab array must be filled
-  with real, complete, valid JSON values for the current request, not left as a placeholder marker.
+Root: Container:"flex" (flexDirection:"column", gap:"0"), Slots.Default holds exactly two items in
+order:
+1. A "header-action" container with Slots.Left containing a "button" (LabelKey "Filters") whose
+   OnClick trigger fires EventId "toggle-filter" targeting the header-action's own ContainerId.
+   Optionally Slots.Right for mode-toggle "segment-panel" containers.
+2. A "sidebar" container (Config.Left.Collapsible:true, css flexDirection:"column"/gap:"0") with:
+   - Slots.Left: one "flyout-card" whose Events.Listeners.ToggleFlyout listens for that same
+     toggle-filter EventId from the header-action's ContainerId; its own Slots.Default holds the
+     filter-panel element (see filter-panel schema below).
+   - Slots.Default: the main content — either a single table, or a "tab-group" whose Slots are
+     keyed by the agent's real distinct view names, each holding its own chart/table combo.
+   - Slots.Right (optional, only if there's a row-detail drill-down): one "stack" container with
+     Push/Pop listeners for push-details-flyout/close-details-flyout.
 
-VARIANT 1 — filter panel + single table:
-{
-  "Fragment": {
-    "Container": "flex",
-    "Init": { "Type": "agentic-api", "DefaultValues": { "Filters": {:Filters} } },
-    "Style": { "css": { "flexDirection": "column", "gap": "0" } },
-    "Slots": {
-      "Default": [
-        {
-          "Container": "header-action",
-          "UID": "HeaderActionContainer",
-          "Events": { "Listeners": {}, "Triggers": { "OnViewSwitch": [ { "ContainerId": "HeaderActionContainer", "EventId": "view-switch" } ] } },
-          "Slots": { "Left": [ { "UID": "HeaderActionFiltersButton", "Element": "button", "Config": { "prefixName": "far-filter", "LabelKey": "Filters" }, "Events": { "Triggers": { "OnClick": [ { "ContainerId": "HeaderActionContainer", "EventId": "toggle-filter" } ] } } } ] }
-        },
-        {
-          "Container": "sidebar",
-          "UID": "WrapperSidebarContainer",
-          "Config": { "Left": { "Collapsible": true } },
-          "Style": { "css": { "flexDirection": "column", "gap": "0" } },
-          "Slots": {
-            "Left": [
-              {
-                "Container": "flyout-card",
-                "Events": { "Listeners": { "ToggleFlyout": [ { "SourceContainerId": "HeaderActionContainer", "EventId": "toggle-filter" } ] } },
-                "Slots": { "Default": [ { "Element": "filter-panel", "UID": "MainFilterPanel", "Config": { "showFooter": true, "showApplyButton": true, "showClearButton": true, "Sections": [ "..." ] } } ] }
-              }
-            ],
-            "Default": [
-              {
-                "Container": "table",
-                "UID": "PrimaryTable",
-                "Init": { "Type": "value-array", "DataSourcePath": "Data" },
-                "Config": { "ShowFilter": true, "Columns": [ "..." ] },
-                "Slots": { "Default": [ { "Container": "footer-container", "Slots": { "Footer": [ { "Container": "footer", "Input": "map(*)", "Config": { "PaginationConfig": { "Paginate": true, "Size": [10,25,50,100], "Slot": "footer" } } } ] } } ] }
-              }
-            ],
-            "Right": [
-              { "Container": "stack", "Config": { "MaxSize": 1 }, "Events": { "Listeners": { "Push": [ { "EventId": "push-details-flyout", "SourceContainerId": "details-button" } ], "Pop": [ { "EventId": "close-details-flyout", "SourceContainerId": "details-flyout" } ] }, "Triggers": { "StackChanged": [ { "EventId": "stack-changed", "ContainerId": "ool-stack" } ] } }, "Slots": {} }
-            ]
-          }
-        }
-      ]
-    }
-  }
-}
-(Omit Slots.Right entirely if there is no detail-flyout/drill-down interaction — do not include an
-empty stack host just to match the shape.)
-
-VARIANT 2 — filter panel + tabbed views (each tab its own chart/table combo), with header-action
-Right-slot mode toggles:
-{
-  "Fragment": {
-    "Container": "flex",
-    "Init": { "Type": "agentic-api", "DefaultValues": { "Filters": {:Filters}, "GroupBy": {:GroupBy} } },
-    "Style": { "css": { "flexDirection": "column", "gap": "0" } },
-    "Slots": {
-      "Default": [
-        {
-          "Container": "header-action",
-          "UID": "HeaderActionContainer",
-          "Config": { "SectionName": "HeaderSection" },
-          "Events": { "Listeners": {}, "Triggers": { "OnViewSwitch": [ { "ContainerId": "HeaderActionContainer", "EventId": "view-switch" } ] } },
-          "Style": { "css": { "flexDirection": "row", "gap": "0rem" } },
-          "Slots": {
-            "Left": [ { "UID": "HeaderActionFiltersButton", "Element": "button", "Config": { "prefixName": "far-filter", "LabelKey": "Filters" } } ],
-            "Right": [ { "UID": "HeaderMetricModeSegment", "Container": "segment-panel", "Slots": {} } ]
-          }
-        },
-        {
-          "Container": "sidebar",
-          "UID": "WrapperSidebarContainer",
-          "Config": { "Left": { "Collapsible": true } },
-          "Style": { "css": { "flexDirection": "column", "gap": "0" } },
-          "Slots": {
-            "Left": [
-              { "Container": "flyout-card", "Events": { "Listeners": { "ToggleFlyout": [ { "SourceContainerId": "HeaderActionContainer", "EventId": "toggle-filter" } ] } }, "Slots": { "Default": [ { "Element": "filter-panel", "UID": "MainFilterPanel" } ] } }
-            ],
-            "Default": [
-              {
-                "Container": "tab-group",
-                "UID": "main-tab-group",
-                "Slots": {
-                  "First Tab Name": [
-                    { "Container": "flex", "Slots": { "Default": [
-                      { "Container": "chart", "UID": "SomeChart", "Init": { "Type": "value-array", "DataSourcePath": "SomeChartData" } },
-                      { "Container": "table", "UID": "SomeTable", "Slots": { "Default": [ { "Container": "footer-container", "Slots": { "Footer": [ { "Container": "footer" } ] } } ] } }
-                    ] } }
-                  ],
-                  "Second Tab Name": [
-                    { "Container": "table", "UID": "AnotherTable", "Slots": { "Default": [ { "Container": "footer-container", "Slots": { "Footer": [ { "Container": "footer" } ] } } ] } }
-                  ]
-                }
-              }
-            ],
-            "Right": [ { "Container": "stack", "Slots": {} } ]
-          }
-        }
-      ]
-    }
-  }
-}
-"First Tab Name"/"Second Tab Name" are themselves placeholders — replace both the slot keys AND
-the tab count/content with the agent's actual distinct views (real tab names matching the request,
-could be 2, 3, or more tabs; could be a single tab/no tab-group at all if there's only one view).
-Omit Slots.Right's stack if there's no drill-down flyout for this fragment.
+This exact Container-type/slot-name shape is required — a hand-rolled two-column flex row instead
+of "sidebar", or skipping the header-action/flyout-card toggle wiring, is the dead-gap/misalignment
+bug documented under "sidebar" in CONTAINER TYPES above. Fill every UID, table/tab name, and data
+binding with real values for the current request — never reuse placeholder-sounding names like
+"PrimaryTable" or "MainFilterPanel" literally.
 
 ELEMENT TYPES AND THEIR REQUIRED CONFIG
 
@@ -546,11 +444,9 @@ When fragment_json is empty:
 1. Read user_prompt carefully — extract layout pattern, data bindings, filter fields, container structure
 2. Build a complete fragment that matches the requested layout end-to-end
 3. Choose the correct root container
-3a. If the layout includes a sidebar filter panel plus main content (table, table+chart, or
-    tabbed views), use the matching VARIANT from CANONICAL SIDEBAR + FILTER + CONTENT SKELETON
-    above as the literal structure — same Container types, same slot names (Left/Default/Right,
-    header-action's Left/Right), same nesting depth, same gap/spacing values. This is a template
-    to copy and fill in real data bindings/columns/tabs, not a rough guide to reinterpret freely.
+3a. If the layout includes a sidebar filter panel plus main content, follow SIDEBAR + FILTER +
+    CONTENT LAYOUT — REQUIRED SHAPE above exactly (Container types and slot names, not a
+    reinterpretation). Skip this entirely for fragments with no filter sidebar.
 4. Use flyout-card for sidebar filter panels when requested
 5. Use flex with flex:1 for the main content area when appropriate
 6. Bind data and filters to the variable names mentioned in user_prompt
