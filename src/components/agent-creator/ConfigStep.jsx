@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import GleanChat from '../shared/GleanChat'
 import Modal from '../shared/Modal'
-import { gleanChat, gleanRunWorkflow } from '../../utils/gleanApi'
+import { gleanChat, gleanRunWorkflow, gleanUploadFile } from '../../utils/gleanApi'
 import { extractJson } from '../../utils/agentBuilder'
 import { cleanJson, restoreTemplateVars } from '../fragment-designer/FragmentDesigner'
+import { safeReadClipboardItems, safeReadClipboardText } from '../../utils/clipboard'
 
 const LIFECYCLE_OPTS = ['GENERAL_AVAILABILITY', 'BETA', 'ALPHA', 'DEPRECATED']
 
@@ -220,7 +221,7 @@ export default function ConfigStep({
     }
   }
 
-  const runFullAutofill = async (desc, deepResearch, layoutChoice, setStatus, onDone) => {
+  const runFullAutofill = async (desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds = []) => {
     // New autofill = new Glean context
     onGleanChatIdChange(null)
     onGleanHistoryChange([])
@@ -246,6 +247,7 @@ export default function ConfigStep({
         conversation: [{ role: 'user', text: buildEnhancePrompt(desc) }],
         mode: 'enhance',
         useDeepResearch: deepResearch,
+        uploadedFileIds,
         onPartial: t => { researchText = t },
       })
       if (researchText.trim()) groundedDesc = researchText.trim()
@@ -661,7 +663,7 @@ export default function ConfigStep({
       {autofillOpen && (
         <FullAutofillModal
           onClose={() => { setAutofillOpen(false); setAutofillStatus('') }}
-          onRun={(desc, deepResearch, layoutChoice, setStatus, onDone) => runFullAutofill(desc, deepResearch, layoutChoice, setStatus, onDone)}
+          onRun={(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds) => runFullAutofill(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds)}
         />
       )}
     </div>
@@ -700,6 +702,9 @@ function FullAutofillModal({ onClose, onRun }) {
   const [layoutPickerOpen, setLayoutPickerOpen] = useState(false)
   const [lastLayoutChoice, setLastLayoutChoice] = useState(null)
   const [hasRun, setHasRun] = useState(false)
+  const [attachments, setAttachments] = useState([]) // { name, fileId, preview }
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef(null)
 
   // "Run Autofill" no longer generates a fragment blind — it first asks the user to pick a
   // concrete layout (or "No Fragment"), and that choice drives both flow shaping and fragment
@@ -709,6 +714,8 @@ function FullAutofillModal({ onClose, onRun }) {
     setLayoutPickerOpen(true)
   }
 
+  const fileIds = () => attachments.map(a => a.fileId).filter(Boolean)
+
   const handleLayoutChosen = (layoutChoice) => {
     setLayoutPickerOpen(false)
     setLastLayoutChoice(layoutChoice)
@@ -717,14 +724,65 @@ function FullAutofillModal({ onClose, onRun }) {
     // Stays open on completion — the run can partially fail (e.g. flow ok, fragment 401)
     // and closing on a timer buried that. onDone here just stops the spinner; the user
     // reviews the status line and explicitly Confirms (closes) or Retries.
-    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => setRunning(false))
+    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => setRunning(false), fileIds())
   }
 
   const handleRetry = () => {
     if (!lastLayoutChoice || running) return
     setRunning(true)
-    onRun(desc.trim(), deepResearch, lastLayoutChoice, setStatus, () => setRunning(false))
+    onRun(desc.trim(), deepResearch, lastLayoutChoice, setStatus, () => setRunning(false), fileIds())
   }
+
+  const uploadFile = useCallback(async (file) => {
+    const preview = file.type.startsWith('image/') ? await new Promise(res => {
+      const r = new FileReader(); r.onload = e => res(e.target.result); r.readAsDataURL(file)
+    }) : null
+    setUploading(true)
+    try {
+      const { fileId, filename } = await gleanUploadFile(file)
+      setAttachments(a => [...a, { name: filename || file.name, fileId, preview }])
+    } catch (err) {
+      setStatus(`⚠ Attach failed: ${err.message}`)
+    } finally {
+      setUploading(false)
+    }
+  }, [])
+
+  const handleDescPaste = useCallback(async (e) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (file) await uploadFile(file)
+        return
+      }
+    }
+  }, [uploadFile])
+
+  const handleClipboardAttach = useCallback(async () => {
+    const items = await safeReadClipboardItems()
+    if (items) {
+      for (const item of items) {
+        const imgType = item.types.find(t => t.startsWith('image/'))
+        if (imgType) {
+          const blob = await item.getType(imgType)
+          await uploadFile(new File([blob], 'pasted-image.png', { type: imgType }))
+          return
+        }
+        if (item.types.includes('text/plain')) {
+          const blob = await item.getType('text/plain')
+          const text = await blob.text()
+          if (text.trim()) setDesc(prev => prev ? `${prev}\n${text}` : text)
+          return
+        }
+      }
+      return
+    }
+    const text = await safeReadClipboardText()
+    if (text && text.trim()) setDesc(prev => prev ? `${prev}\n${text}` : text)
+  }, [uploadFile])
 
   const handleEnhance = async () => {
     if (!desc.trim() || enhancing || running) return
@@ -738,6 +796,7 @@ function FullAutofillModal({ onClose, onRun }) {
         conversation: [{ role: 'user', text: buildEnhancePrompt(original) }],
         mode: 'enhance',
         useDeepResearch: deepResearch,
+        uploadedFileIds: fileIds(),
         onPartial: t => { text = t; setDesc(t) },
         onFallback: () => { fellBack = true },
       })
@@ -777,6 +836,7 @@ function FullAutofillModal({ onClose, onRun }) {
             value={desc}
             onChange={e => { setDesc(e.target.value); setEnhanced(false) }}
             onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleRun() }}
+            onPaste={handleDescPaste}
             placeholder="e.g. A fulfillment progress agent that shows open orders grouped by carrier, with SQL from the warehouse DB, filters for date range and facility, and a rendered table UI with pagination"
             disabled={enhancing}
             className="w-full border border-[#CBD5E1] rounded p-3 text-sm resize-none focus:outline-none focus:border-[#2563EB] disabled:bg-[#F8FAFC] disabled:text-[#64748B]"
@@ -792,13 +852,37 @@ function FullAutofillModal({ onClose, onRun }) {
             </span>
           )}
         </div>
-        <button
-          onClick={handleEnhance}
-          disabled={!desc.trim() || enhancing || running}
-          className="w-full text-xs px-3 py-2 bg-[#F3E8FF] text-[#6B21A8] rounded font-semibold hover:bg-[#E9D5FF] disabled:opacity-50 disabled:cursor-not-allowed border border-[#D8B4FE]"
-        >
-          {enhancing ? '🔎 Researching Confluence, Bitbucket, Jira, Salesforce…' : '✨ Enhance Prompt (research company knowledge)'}
-        </button>
+        <input type="file" ref={fileInputRef} accept="image/*,.json,.txt,.csv,.pdf,.docx" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = '' }} />
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {attachments.map((a, i) => (
+              <div key={i} className="flex items-center gap-1 bg-[#F1F5F9] border border-[#CBD5E1] rounded px-2 py-0.5">
+                {a.preview && <img src={a.preview} alt="" className="w-5 h-5 rounded object-cover" />}
+                <span className="text-[#374151] text-[10px] truncate max-w-32">{a.name}</span>
+                <button onClick={() => setAttachments(aa => aa.filter((_, j) => j !== i))} className="text-red-500 text-[10px] hover:text-red-700 ml-0.5">✕</button>
+              </div>
+            ))}
+            {uploading && <span className="text-[#2563EB] text-[10px] self-center animate-pulse">Uploading…</span>}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={handleEnhance}
+            disabled={!desc.trim() || enhancing || running}
+            className="flex-1 text-xs px-3 py-2 bg-[#F3E8FF] text-[#6B21A8] rounded font-semibold hover:bg-[#E9D5FF] disabled:opacity-50 disabled:cursor-not-allowed border border-[#D8B4FE]"
+          >
+            {enhancing ? '🔎 Researching Confluence, Bitbucket, Jira, Salesforce…' : '✨ Enhance Prompt (research company knowledge)'}
+          </button>
+          <button onClick={() => fileInputRef.current?.click()} disabled={uploading || running} title="Attach file (doc/image/json/csv)"
+            className="px-3 py-2 bg-[#F1F5F9] text-[#374151] rounded text-sm hover:bg-[#E2E8F0] disabled:opacity-50 disabled:cursor-not-allowed">
+            📎
+          </button>
+          <button onClick={handleClipboardAttach} disabled={uploading || running} title="Paste from clipboard (text or image)"
+            className="px-3 py-2 bg-[#F1F5F9] text-[#374151] rounded text-sm hover:bg-[#E2E8F0] disabled:opacity-50 disabled:cursor-not-allowed">
+            📋
+          </button>
+        </div>
         {status && (
           <div className={`rounded px-3 py-2 text-xs font-medium ${status.startsWith('✓') ? 'bg-[#DCFCE7] text-[#166534]' : status.startsWith('⚠') || status.includes('Error') ? 'bg-[#FEE2E2] text-[#991B1B]' : 'bg-[#DBEAFE] text-[#1E3A8A]'}`}>
             {status}
