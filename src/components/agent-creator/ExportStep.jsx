@@ -132,6 +132,8 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
   const [testOpen, setTestOpen] = useState(false)
   const [testStatus, setTestStatus] = useState(null) // { state: 'busy'|'ok'|'error', message }
   const [testTraces, setTestTraces] = useState(null)
+  const [testDebug, setTestDebug] = useState(null) // { request: {start,send,trace}, response: {start,send,trace,error} }
+  const [debugOpen, setDebugOpen] = useState(false)
   const [fixingKey, setFixingKey] = useState(null)
   const [fixStatusByKey, setFixStatusByKey] = useState({})
   const jsonStr = JSON.stringify(agentJson, null, 2)
@@ -182,6 +184,8 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
     setTestOpen(true)
     setTestTraces(null)
     setFixStatusByKey({})
+    const debug = { request: {}, response: {} }
+    setTestDebug(debug)
     try {
       setTestStatus({ state: 'busy', message: 'Step 1/4: Publishing agent…' })
       const payload = buildPublishPayload(config, flows, contents)
@@ -189,30 +193,42 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
       const agentIdForChat = payload.AgentId
 
       setTestStatus({ state: 'busy', message: 'Step 2/4: Starting chat session…' })
-      const startResp = await stackChatStart({ ...activeSession, agentId: agentIdForChat })
+      const startReq = { agentId: agentIdForChat }
+      const startResp = await stackChatStart({ ...activeSession, ...startReq })
+      debug.request.start = startReq; debug.response.start = startResp
+      setTestDebug({ ...debug })
       const sessionId = startResp?.data?.SessionId || startResp?.SessionId
-      if (!sessionId) throw new Error('startChat succeeded but returned no SessionId — response: ' + JSON.stringify(startResp).slice(0, 300))
+      if (!sessionId) throw new Error('startChat succeeded but returned no SessionId — see raw response below.')
 
       setTestStatus({ state: 'busy', message: `Step 3/4: Sending "${TEST_MESSAGE}"…` })
-      await stackChatSend({ ...activeSession, chatbotId: agentIdForChat, sessionId, message: TEST_MESSAGE })
+      const sendReq = { chatbotId: agentIdForChat, sessionId, message: TEST_MESSAGE }
+      const sendResp = await stackChatSend({ ...activeSession, ...sendReq })
+      debug.request.send = sendReq; debug.response.send = sendResp
+      setTestDebug({ ...debug })
 
       // Trace recording may lag slightly behind the chat call returning — retry a few times
       // with a short pause before concluding the turn genuinely didn't execute.
       let parsed = []
+      let lastTraceResp = null
       for (let attempt = 1; attempt <= 4 && parsed.length === 0; attempt++) {
         setTestStatus({ state: 'busy', message: `Step 4/4: Fetching execution trace${attempt > 1 ? ` (retry ${attempt - 1})` : ''}…` })
         if (attempt > 1) await new Promise(res => setTimeout(res, 1200))
         const traceResp = await stackChatTrace({ ...activeSession, sessionId, turn: 'TURN1' })
+        lastTraceResp = traceResp
         const records = traceResp?.data || []
         parsed = records.map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
       }
+      debug.request.trace = { sessionId, turn: 'TURN1' }; debug.response.trace = lastTraceResp
+      setTestDebug({ ...debug })
       setTestTraces(parsed)
-      setTestStatus(parsed.length > 0 ? null : { state: 'error', message: 'Trace query returned no records after 4 attempts — the send call may not have actually executed the turn.' })
+      setTestStatus(parsed.length > 0 ? null : { state: 'error', message: 'Trace query returned no records after 4 attempts — see the raw request/response payloads below for every step.' })
 
       // Best-effort cleanup — a failure here doesn't affect anything the user cares about,
       // the trace is already fetched, so it's not worth surfacing as a test failure.
       stackChatEnd({ ...activeSession, sessionId }).catch(() => {})
     } catch (err) {
+      debug.response.error = err.message
+      setTestDebug({ ...debug })
       setTestStatus({ state: 'error', message: err.message })
     }
   }
@@ -334,6 +350,37 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
                   testStatus.state === 'error' ? 'bg-[#FEF2F2] text-[#991B1B]' : 'bg-[#F0FDF4] text-[#166534]'
                 }`}>
                   {testStatus.state === 'busy' ? '⏳ ' : testStatus.state === 'error' ? '⚠ ' : '✓ '}{testStatus.message}
+                </div>
+              )}
+              {testDebug && (testDebug.request.start || testDebug.response.error) && (
+                <div className="mb-3 border border-[#CBD5E1] rounded">
+                  <button
+                    onClick={() => setDebugOpen(o => !o)}
+                    className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-semibold bg-[#F1F5F9] text-[#374151] rounded-t"
+                  >
+                    <span>🔍 Raw request/response payloads (every step)</span>
+                    <span>{(debugOpen || testStatus?.state === 'error') ? '▲' : '▼'}</span>
+                  </button>
+                  {(debugOpen || testStatus?.state === 'error') && (
+                    <div className="p-2 max-h-64 overflow-y-auto bg-[#0F172A]">
+                      {['start', 'send', 'trace'].map(step => (
+                        (testDebug.request[step] || testDebug.response[step]) && (
+                          <div key={step} className="mb-2">
+                            <div className="text-[10px] font-bold text-[#93C5FD] uppercase mb-0.5">{step}</div>
+                            {testDebug.request[step] && (
+                              <pre className="text-[10px] text-[#86EFAC] whitespace-pre-wrap mb-1">→ request: {JSON.stringify(testDebug.request[step], null, 2)}</pre>
+                            )}
+                            {testDebug.response[step] && (
+                              <pre className="text-[10px] text-[#FCA5A5] whitespace-pre-wrap">← response: {JSON.stringify(testDebug.response[step], null, 2)}</pre>
+                            )}
+                          </div>
+                        )
+                      ))}
+                      {testDebug.response.error && (
+                        <pre className="text-[10px] text-[#FCA5A5] whitespace-pre-wrap">error: {testDebug.response.error}</pre>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
               {testTraces?.map((root, i) => {
