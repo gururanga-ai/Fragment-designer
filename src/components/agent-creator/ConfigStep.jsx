@@ -307,11 +307,29 @@ export default function ConfigStep({
       const rawId = (latestAgentId || '').replace(/^ext-/, '') || (latestAgentName || '').replace(/\s+/g, '') || 'agent'
       const derivedName = rawId.charAt(0).toUpperCase() + rawId.slice(1) + 'Fragment'
       const contentName = existingRenderUI?.inputJSON || derivedName
+
+      // Step 2 (flow/SQL) and this step are two independent Glean calls with no shared knowledge
+      // of field names — without this, each guesses its own, so a table's DataSourcePath rarely
+      // matches what renderUI's dataMap actually calls it, and filter-panel Input keys rarely
+      // match the {:Filters.X} references the flow's SQL/WHERE/conditions already use, so Apply
+      // renders a UI that looks right but never actually filters anything. Ground both explicitly
+      // in what the flow we JUST generated actually produces.
+      const renderUIAction = Array.isArray(flowData) ? flowData.find(a => a.type === 'renderUI') : null
+      const varPool = (renderUIAction?.dataMap && typeof renderUIAction.dataMap === 'object') ? renderUIAction.dataMap : {}
+      const filterKeyMatches = Array.isArray(flowData)
+        ? [...new Set([...JSON.stringify(flowData).matchAll(/\{:Filters\.([A-Za-z0-9_]+)/g)].map(m => m[1]))]
+        : []
+      const dataBindingNote = Object.keys(varPool).length > 0
+        ? ` The flow's renderUI action produces exactly these dataMap keys — bind every table/chart/segment-panel Init.DataSourcePath to one of these real keys (matching by meaning), never invent a different DataSourcePath name: ${Object.keys(varPool).join(', ')}.`
+        : ''
+      const filterKeyNote = filterKeyMatches.length > 0
+        ? ` The flow's SQL/WHERE/conditions already read filters via these exact keys: ${filterKeyMatches.join(', ')} (i.e. {:Filters.<key>}). Every filter-panel Attribute's "Input" MUST be exactly one of these names — using a different name means Apply changes the UI state but the flow never sees it, so filtering silently does nothing.`
+        : ''
       // The user already picked a concrete layout in the picker step — go straight to that
       // blueprint instead of making a separate "suggest a layout" round trip first.
-      let layoutIntent = layoutChoice?.blueprint
+      let layoutIntent = (layoutChoice?.blueprint
         ? `${desc}\n\nRequired layout pattern (user-selected: ${layoutChoice.label}): ${layoutChoice.blueprint}`
-        : desc
+        : desc) + dataBindingNote + filterKeyNote
       let generatedFragment = null
 
       setStatus('⏳ Step 3/3: Generating fragment layout...')
@@ -329,6 +347,7 @@ export default function ConfigStep({
             prompt: layoutIntent,
             fragment_json: {},
             issues: [],
+            var_pool: varPool,
             conversation: [],
             useDeepResearch: deepResearch,
             onPartial: t => { genText = t },
