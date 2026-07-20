@@ -12,7 +12,7 @@ const LIFECYCLE_OPTS = ['GENERAL_AVAILABILITY', 'BETA', 'ALPHA', 'DEPRECATED']
 // real reference fragments (References/*.json: MHE Dashboard, ticket/fulfillment agents, etc.).
 // "blueprint" is fed directly into fragment GENERATION MODE as a concrete container/slot spec so
 // the model has an actual structural target instead of inferring layout from prose alone.
-const LAYOUT_OPTIONS = [
+export const LAYOUT_OPTIONS = [
   {
     id: 'table-filters',
     icon: '📋',
@@ -958,7 +958,7 @@ function FullAutofillModal({ onClose, onRun }) {
   )
 }
 
-function LayoutPickerModal({ onClose, onChoose }) {
+export function LayoutPickerModal({ onClose, onChoose }) {
   return (
     <Modal title="Choose a UI Layout" onClose={onClose} width="max-w-2xl">
       <div className="p-4">

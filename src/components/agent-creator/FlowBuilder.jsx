@@ -10,6 +10,10 @@ import GleanChat from '../shared/GleanChat'
 import JsonEditor from '../shared/JsonEditor'
 import Modal from '../shared/Modal'
 import { safeReadClipboardText } from '../../utils/clipboard'
+import { gleanRunWorkflow } from '../../utils/gleanApi'
+import { extractJson } from '../../utils/agentBuilder'
+import { cleanJson, restoreTemplateVars } from '../fragment-designer/FragmentDesigner'
+import { LAYOUT_OPTIONS, LayoutPickerModal } from './ConfigStep'
 
 // ── Action info ──────────────────────────────────────────────────────
 const ACTION_INFO = {
@@ -510,6 +514,9 @@ export default function FlowBuilder({
   const [modal, setModal] = useState(null) // 'picker' | 'paste' | 'edit' | 'fragment'
   const [search, setSearch] = useState('')
   const [searchHitIdx, setSearchHitIdx] = useState(0)
+  const [layoutPickerOpen, setLayoutPickerOpen] = useState(false)
+  const [aiFragmentBusy, setAiFragmentBusy] = useState(false)
+  const [aiFragmentError, setAiFragmentError] = useState('')
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
   const flowKeys = Object.keys(flows)
@@ -728,6 +735,100 @@ export default function FlowBuilder({
       return frag ? { ...r, _fragment_json: frag } : (({ _fragment_json, ...rest }) => rest)(r)
     })
     setActions(a)
+  }
+
+  // ✨ Create with AI — same layout-picker + grounded generation Full Autofill's Step 4 does,
+  // but scoped to a single renderUI action against the flow the user already has instead of one
+  // just generated in this same run. Lets someone who built/refined the flow first (e.g. via
+  // Full Autofill's "skip fragment for now") come back and generate the UI on their own schedule.
+  const runAiFragmentGeneration = async (layoutChoice) => {
+    if (!sel) return
+    setLayoutPickerOpen(false)
+    setAiFragmentBusy(true)
+    setAiFragmentError('')
+    try {
+      const contentName = sel.inputJSON || (sel.name ? `${sel.name}Fragment` : 'myFragment')
+      const flatActions = actions.map(({ _id, ...r }) => r)
+      const varPool = (sel.dataMap && typeof sel.dataMap === 'object') ? sel.dataMap : {}
+      const filterKeyMatches = [...new Set([...JSON.stringify(flatActions).matchAll(/\{:Filters\.([A-Za-z0-9_]+)/g)].map(m => m[1]))]
+      const dataBindingNote = Object.keys(varPool).length > 0
+        ? ` The flow's renderUI action produces exactly these dataMap keys — bind every table/chart/segment-panel Init.DataSourcePath to one of these real keys (matching by meaning), never invent a different DataSourcePath name: ${Object.keys(varPool).join(', ')}.`
+        : ''
+      const filterKeyNote = filterKeyMatches.length > 0
+        ? ` The flow's SQL/WHERE/conditions already read filters via these exact keys: ${filterKeyMatches.join(', ')} (i.e. {:Filters.<key>}). Every filter-panel Attribute's "Input" MUST be exactly one of these names — using a different name means Apply changes the UI state but the flow never sees it.`
+        : ''
+      const rowFieldsByDataKey = {}
+      for (const [dataKey, expr] of Object.entries(varPool)) {
+        if (dataKey === 'Filters' || typeof expr !== 'string') continue
+        const varMatch = expr.match(/object::([A-Za-z0-9_]+)/)
+        if (!varMatch) continue
+        const producer = flatActions.find(a => a.outputVariableName === varMatch[1])
+        if (!producer) continue
+        let fields = []
+        if (producer.type === 'transformTable') {
+          const allFields = [...(producer.fields || []), ...(producer.conditionalFields || []).map(cf => cf.field).filter(Boolean)]
+          fields = allFields.map(f => f.targetFieldName).filter(Boolean)
+        } else if (producer.type === 'sql' && typeof producer.sql === 'string') {
+          fields = [...producer.sql.matchAll(/\bAS\s+([A-Za-z0-9_]+)/gi)].map(m => m[1])
+        }
+        if (fields.length > 0) rowFieldsByDataKey[dataKey] = [...new Set(fields)]
+      }
+      const rowFieldNote = Object.keys(rowFieldsByDataKey).length > 0
+        ? ' ' + Object.entries(rowFieldsByDataKey).map(([k, fields]) =>
+            `The dataset bound via DataSourcePath:"${k}" has EXACTLY these row fields, case-exact, and no others: ${fields.join(', ')}. Every table column Input/Sort.SortBy and chart dataMapping.seriesMappings.fieldMappings key bound to this dataset MUST be one of these names — inventing a column/field name outside this list renders empty with no error.`
+          ).join(' ')
+        : ''
+      const baseDesc = sel.description || sel.name || 'Render the results of this flow.'
+      const layoutIntent = (layoutChoice?.blueprint
+        ? `${baseDesc}\n\nRequired layout pattern (user-selected: ${layoutChoice.label}): ${layoutChoice.blueprint}`
+        : baseDesc) + dataBindingNote + filterKeyNote + rowFieldNote
+
+      let generatedFragment = null
+      let lastGenText = ''
+      for (let attempt = 1; attempt <= 3 && !generatedFragment; attempt++) {
+        let genText = ''
+        await gleanRunWorkflow({
+          prompt: layoutIntent, fragment_json: {}, issues: [], var_pool: varPool, conversation: [],
+          useDeepResearch: false, onPartial: t => { genText = t },
+        })
+        lastGenText = genText
+        const generated = extractJson(genText) || extractJson(cleanJson(genText))
+        if (generated?.Fragment) generatedFragment = generated
+      }
+      if (!generatedFragment) {
+        const preview = (lastGenText || '(empty response)').trim().slice(0, 300)
+        throw new Error(`generation returned no usable layout. Raw response: ${preview}${lastGenText.length > 300 ? '…' : ''}`)
+      }
+
+      const newContent = {
+        Name: contentName,
+        AgentContentType: 'inputs',
+        language: '',
+        Content: restoreTemplateVars(JSON.stringify(generatedFragment, null, 2)),
+        description: layoutIntent,
+      }
+      onContentsChange(prev => {
+        const idx = prev.findIndex(c => (c.Name || c.name) === contentName)
+        if (idx === -1) return [...prev, newContent]
+        const next = [...prev]; next[idx] = newContent; return next
+      })
+
+      if (selPath) {
+        const clean = actions.map(({ _id, ...r }) => r)
+        const newActions = setActionAtPath(clean, selPath, old => ({ ...old, inputJSON: old.inputJSON || contentName, _fragment_json: newContent }))
+        setActions(newActions)
+      } else {
+        const a = actions.map(({ _id, ...r }, i) => {
+          if (i !== selIdx) return r
+          return { ...r, inputJSON: r.inputJSON || contentName, _fragment_json: newContent }
+        })
+        setActions(a)
+      }
+    } catch (e) {
+      setAiFragmentError(e.message)
+    } finally {
+      setAiFragmentBusy(false)
+    }
   }
 
   const insertActions = (data) => {
@@ -1063,7 +1164,8 @@ export default function FlowBuilder({
                   <SmBtn label="Delete" onClick={handleDeleteSelected} red />
                   {sel.type === 'renderUI' && (
                     <>
-                      <SmBtn label="Design Fragment" onClick={() => setModal('fragment')} amber />
+                      <SmBtn label={aiFragmentBusy ? '⏳ Creating…' : '✨ Create with AI'} onClick={() => setLayoutPickerOpen(true)} amber disabled={aiFragmentBusy} />
+                      <SmBtn label="Paste JSON" onClick={() => setModal('fragment')} />
                       <SmBtn label="🎨 Edit in Designer" onClick={() => {
                         // Prefer live content item over potentially stale _fragment_json
                         const liveContent = sel.inputJSON && Array.isArray(contents)
@@ -1115,6 +1217,16 @@ export default function FlowBuilder({
       {modal === 'paste' && <PasteJsonModal onInsert={insertActions} onClose={() => setModal(null)} />}
       {modal === 'edit' && sel && <EditActionModal action={sel} onSave={selPath ? saveEditedNestedAction : saveEditedAction} onClose={() => setModal(null)} />}
       {modal === 'fragment' && sel && <FragmentModal action={sel} onSave={selPath ? saveNestedFragment : saveFragment} onClose={() => setModal(null)} />}
+      {layoutPickerOpen && (
+        <LayoutPickerModal onClose={() => setLayoutPickerOpen(false)} onChoose={runAiFragmentGeneration} />
+      )}
+      {aiFragmentError && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg shadow-lg p-3">
+          <p className="text-xs font-semibold text-[#991B1B] mb-1">✨ Create with AI failed</p>
+          <p className="text-xs text-[#991B1B]">{aiFragmentError}</p>
+          <button onClick={() => setAiFragmentError('')} className="mt-2 text-xs px-2 py-1 bg-white text-[#991B1B] rounded border border-[#FCA5A5]">Dismiss</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -1131,11 +1243,11 @@ function Btn({ label, bg, fg, onClick }) {
   )
 }
 
-function SmBtn({ label, onClick, red, amber, blue }) {
+function SmBtn({ label, onClick, red, amber, blue, disabled }) {
   const bg = red ? '#FEE2E2' : amber ? '#FEF3C7' : blue ? '#DBEAFE' : '#F1F5F9'
   const fg = red ? '#991B1B' : amber ? '#92400E' : blue ? '#1E3A8A' : '#374151'
   return (
-    <button onClick={onClick} className="px-2 py-0.5 rounded text-xs font-medium border border-black/5" style={{ backgroundColor: bg, color: fg }}>
+    <button onClick={onClick} disabled={disabled} className="px-2 py-0.5 rounded text-xs font-medium border border-black/5 disabled:opacity-50 disabled:cursor-not-allowed" style={{ backgroundColor: bg, color: fg }}>
       {label}
     </button>
   )
