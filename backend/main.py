@@ -799,35 +799,27 @@ async def _stack_post(url: str, headers: dict, payload: dict) -> dict:
 
 @app.post("/api/stack/chat/start")
 async def stack_chat_start(req: StackChatStartRequest):
-    """Test-flow step 1: start a chatbot session for the just-published agent. Base payload shape
-    confirmed against a real captured request/response for this exact endpoint.
-    SessionParams.UsePublishedVersionOnly:false matters — Composer defaults this to true when
-    omitted, meaning a test right after Publish would still run the PREVIOUSLY published version
-    instead of what was just saved."""
+    """Test-flow step 1: start a chatbot session for the just-published agent. Goes through
+    /composer/api/chatbot/startChat directly (NOT the /commonui-facade/api/commonui-facade proxy
+    path — that's only correct for agentTrace, confirmed by the user against a real working
+    curl sequence). SessionParams.UsePublishedVersionOnly:false matters — Composer defaults this
+    to true when omitted, meaning a test right after Publish would still run the PREVIOUSLY
+    published version instead of what was just saved."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
-    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/startChat"
-    payload = {
-        "ChatBotId": req.agentId,
-        "Messages": None,
-        "ChatbotId": req.agentId,
-        "SessionId": None,
-        "SessionParams": {"UsePublishedVersionOnly": False},
-    }
+    url = f"https://{req.stackName}.{domain}/composer/api/chatbot/startChat"
+    payload = {"ChatBotId": req.agentId, "SessionParams": {"UsePublishedVersionOnly": False}}
     return await _stack_post(url, _stack_headers(req), payload)
 
 
 @app.post("/api/stack/chat/send")
 async def stack_chat_send(req: StackChatSendRequest):
-    """Test-flow step 2: send a message into the already-started session. Two earlier guesses
-    (a separate chat/stream endpoint, then reusing startChat with a populated SessionId) both
-    failed — the second one parsed and routed but hit a real backend transaction-commit error,
-    consistent with startChat only ever being valid for creating a brand-new session. The real
-    mechanism is a distinct chatbot/chat endpoint: ChatBotId (not the old duplicate "ChatbotId"
-    key) + the real SessionId + the message duplicated into BOTH "Chat" and "userInput" (different
-    layers of the stack apparently read different fields for this) + the same
-    UsePublishedVersionOnly:false SessionParams as the start call."""
+    """Test-flow step 2: send a message into the already-started session. Same
+    /composer/api/chatbot path family as startChat (not commonui-facade) — chat/{message} is a
+    distinct endpoint from startChat, ChatBotId + the real SessionId + the message duplicated
+    into BOTH "Chat" and "userInput" (different layers apparently read different fields for
+    this) + the same UsePublishedVersionOnly:false SessionParams as the start call."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
-    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/chat"
+    url = f"https://{req.stackName}.{domain}/composer/api/chatbot/chat"
     payload = {
         "ChatBotId": req.chatbotId,
         "SessionId": req.sessionId,
@@ -840,10 +832,10 @@ async def stack_chat_send(req: StackChatSendRequest):
 
 @app.post("/api/stack/chat/end")
 async def stack_chat_end(req: StackChatEndRequest):
-    """Optional Test-flow cleanup: ends the test session. Best-effort — callers should not fail
-    the overall test run if this errors, it's just tidy-up."""
+    """Optional Test-flow cleanup: ends the test session. Same /composer/api/chatbot path family.
+    Best-effort — callers should not fail the overall test run if this errors, it's just tidy-up."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
-    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/endChat"
+    url = f"https://{req.stackName}.{domain}/composer/api/chatbot/endChat"
     payload = {"SessionId": req.sessionId}
     return await _stack_post(url, _stack_headers(req), payload)
 
