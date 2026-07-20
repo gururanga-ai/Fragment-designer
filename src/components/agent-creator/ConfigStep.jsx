@@ -221,7 +221,7 @@ export default function ConfigStep({
     }
   }
 
-  const runFullAutofill = async (desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds = []) => {
+  const runFullAutofill = async (desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds = [], skipResearch = false) => {
     // New autofill = new Glean context
     onGleanChatIdChange(null)
     onGleanHistoryChange([])
@@ -239,20 +239,28 @@ export default function ConfigStep({
     // (e.g. a Confluence page) — that tripling of slow lookup work was what pushed config/flow/
     // fragment each past the extension relay's hard lifetime cap. One grounded rewrite here means
     // the downstream calls are pure "generate JSON from an already-detailed spec" — fast.
+    // If the user already gave everything needed (or attached it), skipResearch bypasses this
+    // call entirely — company-knowledge search is consistently the slowest single Glean
+    // operation and the one most likely to outlive the relay's hard lifetime cap regardless of
+    // retries, so when it isn't actually needed the fastest fix is to just not make the call.
     let groundedDesc = desc
-    setStatus('⏳ Step 1/4: Researching company knowledge...')
-    try {
-      let researchText = ''
-      await gleanChat({
-        conversation: [{ role: 'user', text: buildEnhancePrompt(desc) }],
-        mode: 'enhance',
-        useDeepResearch: deepResearch,
-        uploadedFileIds,
-        onPartial: t => { researchText = t },
-      })
-      if (researchText.trim()) groundedDesc = researchText.trim()
-    } catch (e) {
-      errors.push(`Research: ${e.message} — continuing with the description as typed, ungrounded`)
+    if (skipResearch) {
+      setStatus('⏳ Step 1/4: Skipped (using description as provided)...')
+    } else {
+      setStatus('⏳ Step 1/4: Researching company knowledge...')
+      try {
+        let researchText = ''
+        await gleanChat({
+          conversation: [{ role: 'user', text: buildEnhancePrompt(desc) }],
+          mode: 'enhance',
+          useDeepResearch: deepResearch,
+          uploadedFileIds,
+          onPartial: t => { researchText = t },
+        })
+        if (researchText.trim()) groundedDesc = researchText.trim()
+      } catch (e) {
+        errors.push(`Research: ${e.message} — continuing with the description as typed, ungrounded`)
+      }
     }
 
     // Call 1: configure agent (triggers CONFIG MODE)
@@ -663,7 +671,7 @@ export default function ConfigStep({
       {autofillOpen && (
         <FullAutofillModal
           onClose={() => { setAutofillOpen(false); setAutofillStatus('') }}
-          onRun={(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds) => runFullAutofill(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds)}
+          onRun={(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds, skipResearch) => runFullAutofill(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds, skipResearch)}
         />
       )}
     </div>
@@ -704,6 +712,7 @@ function FullAutofillModal({ onClose, onRun }) {
   const [hasRun, setHasRun] = useState(false)
   const [attachments, setAttachments] = useState([]) // { name, fileId, preview }
   const [uploading, setUploading] = useState(false)
+  const [skipResearch, setSkipResearch] = useState(false)
   const fileInputRef = useRef(null)
 
   // "Run Autofill" no longer generates a fragment blind — it first asks the user to pick a
@@ -724,13 +733,13 @@ function FullAutofillModal({ onClose, onRun }) {
     // Stays open on completion — the run can partially fail (e.g. flow ok, fragment 401)
     // and closing on a timer buried that. onDone here just stops the spinner; the user
     // reviews the status line and explicitly Confirms (closes) or Retries.
-    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => setRunning(false), fileIds())
+    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => setRunning(false), fileIds(), skipResearch)
   }
 
   const handleRetry = () => {
     if (!lastLayoutChoice || running) return
     setRunning(true)
-    onRun(desc.trim(), deepResearch, lastLayoutChoice, setStatus, () => setRunning(false), fileIds())
+    onRun(desc.trim(), deepResearch, lastLayoutChoice, setStatus, () => setRunning(false), fileIds(), skipResearch)
   }
 
   const uploadFile = useCallback(async (file) => {
@@ -829,6 +838,10 @@ function FullAutofillModal({ onClose, onRun }) {
             {deepResearch ? '🧠 Thinking' : '⚡ Fast'}
           </button>
         </div>
+        <label className="flex items-center gap-1.5 text-xs text-[#374151] -mt-1">
+          <input type="checkbox" checked={skipResearch} onChange={e => setSkipResearch(e.target.checked)} className="accent-[#1E3A8A]" />
+          Skip company knowledge search — I've already given all the details needed below
+        </label>
         <div className="relative">
           <textarea
             rows={7}
