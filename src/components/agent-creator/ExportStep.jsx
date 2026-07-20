@@ -196,12 +196,18 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
       setTestStatus({ state: 'busy', message: `Step 3/4: Sending "${TEST_MESSAGE}"…` })
       await stackChatSend({ ...activeSession, chatbotId: agentIdForChat, sessionId, message: TEST_MESSAGE })
 
-      setTestStatus({ state: 'busy', message: 'Step 4/4: Fetching execution trace…' })
-      const traceResp = await stackChatTrace({ ...activeSession, sessionId, turn: 'TURN1' })
-      const records = traceResp?.data || []
-      const parsed = records.map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
+      // Trace recording may lag slightly behind the chat call returning — retry a few times
+      // with a short pause before concluding the turn genuinely didn't execute.
+      let parsed = []
+      for (let attempt = 1; attempt <= 4 && parsed.length === 0; attempt++) {
+        setTestStatus({ state: 'busy', message: `Step 4/4: Fetching execution trace${attempt > 1 ? ` (retry ${attempt - 1})` : ''}…` })
+        if (attempt > 1) await new Promise(res => setTimeout(res, 1200))
+        const traceResp = await stackChatTrace({ ...activeSession, sessionId, turn: 'TURN1' })
+        const records = traceResp?.data || []
+        parsed = records.map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
+      }
       setTestTraces(parsed)
-      setTestStatus(parsed.length > 0 ? null : { state: 'error', message: 'Trace query returned no records — the turn may not have executed yet.' })
+      setTestStatus(parsed.length > 0 ? null : { state: 'error', message: 'Trace query returned no records after 4 attempts — the send call may not have actually executed the turn.' })
 
       // Best-effort cleanup — a failure here doesn't affect anything the user cares about,
       // the trace is already fetched, so it's not worth surfacing as a test failure.

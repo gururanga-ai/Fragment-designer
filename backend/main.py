@@ -787,6 +787,13 @@ async def _stack_post(url: str, headers: dict, payload: dict) -> dict:
     if not resp.is_success:
         detail = body if isinstance(body, str) else json.dumps(body)[:2000]
         raise HTTPException(status_code=resp.status_code, detail=detail)
+    # Composer can return HTTP 200 with a business-logic failure in the body itself
+    # ({"success": false, ...}) — without this check that silently looked like success here,
+    # e.g. a chat/send call that never actually executed the turn, only surfacing later as a
+    # confusing "trace query returned no records" instead of the real failure at the real step.
+    if isinstance(body, dict) and body.get("success") is False:
+        detail = json.dumps(body)[:2000]
+        raise HTTPException(status_code=400, detail=detail)
     return body
 
 
