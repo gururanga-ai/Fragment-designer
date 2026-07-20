@@ -798,19 +798,19 @@ async def stack_chat_start(req: StackChatStartRequest):
 
 @app.post("/api/stack/chat/send")
 async def stack_chat_send(req: StackChatSendRequest):
-    """Test-flow step 2: send a message into the already-started session. A separate
-    chatbot/chat/stream endpoint 404'd — confirmed there's no such route. Per the user: the SAME
-    startChat endpoint is reused for every turn, distinguished by SessionId (null on the first
-    call, populated on every following one) and Messages (null to just open a session, populated
-    with the user's turn to actually converse). The exact Messages array item shape is still
-    UNCONFIRMED — {"Text": "..."} is a guess matching this API's PascalCase field convention
-    (ChatBotId/SessionParams/etc.) — if this still 404s/400s, that item shape is the next thing to
-    check against a real captured request."""
+    """Test-flow step 2: send a message into the already-started session. Reuses the same
+    startChat endpoint (per the user) — SessionId populated instead of null is what turns this
+    into "continue this session" rather than "start a new one". Messages must be an OBJECT, not
+    an array — a raw array attempt got a server-side Jackson error naming the real Java type,
+    com.manh.cp.fw.common.Messages, "Cannot deserialize ... from Array value". Every response in
+    this same API family wraps its own lists identically: {"messages": {"Message": [...], "Size":
+    N}} (see the agentTrace/startChat response bodies) — applying that exact convention to the
+    request side. The inner item shape ({"Text": ...}) is still an educated guess, not confirmed."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
     url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/startChat"
     payload = {
         "ChatBotId": req.chatbotId,
-        "Messages": [{"Text": req.message}],
+        "Messages": {"Message": [{"Text": req.message}], "Size": 1},
         "ChatbotId": req.chatbotId,
         "SessionId": req.sessionId,
         "SessionParams": {},
