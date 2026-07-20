@@ -133,6 +133,7 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
   const [testStatus, setTestStatus] = useState(null) // { state: 'busy'|'ok'|'error', message }
   const [testTraces, setTestTraces] = useState(null)
   const [testDebug, setTestDebug] = useState(null) // { request: {start,send,trace}, response: {start,send,trace,error} }
+  const [testQuickErrors, setTestQuickErrors] = useState([]) // data.DataResponse.errorsFound from the chat/send response itself
   const [debugOpen, setDebugOpen] = useState(false)
   const [fixingKey, setFixingKey] = useState(null)
   const [fixStatusByKey, setFixStatusByKey] = useState({})
@@ -183,6 +184,7 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
   const runTest = async (activeSession) => {
     setTestOpen(true)
     setTestTraces(null)
+    setTestQuickErrors([])
     setFixStatusByKey({})
     const debug = { request: {}, response: {} }
     setTestDebug(debug)
@@ -205,6 +207,10 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
       const sendResp = await stackChatSend({ ...activeSession, ...sendReq })
       debug.request.send = sendReq; debug.response.send = sendResp
       setTestDebug({ ...debug })
+      // The chat response itself carries a summary of any error the turn hit
+      // (data.DataResponse.errorsFound) — surface it immediately as a fallback, since it doesn't
+      // depend on agentTrace succeeding at all.
+      setTestQuickErrors(sendResp?.data?.DataResponse?.errorsFound || [])
 
       // Trace recording may lag slightly behind the chat call returning — retry a few times
       // with a short pause before concluding the turn genuinely didn't execute. Queries by
@@ -354,6 +360,18 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
                   testStatus.state === 'error' ? 'bg-[#FEF2F2] text-[#991B1B]' : 'bg-[#F0FDF4] text-[#166534]'
                 }`}>
                   {testStatus.state === 'busy' ? '⏳ ' : testStatus.state === 'error' ? '⚠ ' : '✓ '}{testStatus.message}
+                </div>
+              )}
+              {testQuickErrors.length > 0 && (
+                <div className="mb-3 rounded border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2">
+                  <div className="text-[10px] font-bold text-[#991B1B] uppercase mb-1">
+                    Error(s) reported directly by the chat response (independent of the trace below)
+                  </div>
+                  {testQuickErrors.map((e, i) => (
+                    <div key={i} className="text-xs text-[#991B1B] font-mono">
+                      [{e.errorCode || e.errorType}] {e.errorMessage}
+                    </div>
+                  ))}
                 </div>
               )}
               {testDebug && (testDebug.request.start || testDebug.response.error) && (

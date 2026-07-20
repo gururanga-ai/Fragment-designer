@@ -799,15 +799,27 @@ async def _stack_post(url: str, headers: dict, payload: dict) -> dict:
 
 @app.post("/api/stack/chat/start")
 async def stack_chat_start(req: StackChatStartRequest):
-    """Test-flow step 1: start a chatbot session for the just-published agent. Goes through
-    /composer/api/chatbot/startChat directly (NOT the /commonui-facade/api/commonui-facade proxy
-    path — that's only correct for agentTrace, confirmed by the user against a real working
-    curl sequence). SessionParams.UsePublishedVersionOnly:false matters — Composer defaults this
-    to true when omitted, meaning a test right after Publish would still run the PREVIOUSLY
-    published version instead of what was just saved."""
+    """Test-flow step 1: start a chatbot session for the just-published agent.
+    /commonui-facade/api/commonui-facade/chatbot/startChat — NOT /composer/api/chatbot/startChat.
+    Both "work" in the sense of returning a real SessionId, but only sessions started through the
+    commonui-facade path actually get agentTrace records: a controlled comparison showed a fresh
+    session started via /composer/api/chatbot/startChat got a real DataResponse.errorsFound back
+    from chat/send (so the turn genuinely executed) but zero agentTrace records for that
+    SessionId, while a session that had earlier gone through this commonui-facade path returned
+    a full trace on the very next turn. commonui-facade is presumably what sets up the tracing
+    context (matching the "Context.SessionTrace ==> true" log line only ever seen on sessions
+    reached this way). SessionParams.UsePublishedVersionOnly:false still matters — Composer
+    defaults this to true when omitted, meaning a test right after Publish would still run the
+    PREVIOUSLY published version instead of what was just saved."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
-    url = f"https://{req.stackName}.{domain}/composer/api/chatbot/startChat"
-    payload = {"ChatBotId": req.agentId, "SessionParams": {"UsePublishedVersionOnly": False}}
+    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/startChat"
+    payload = {
+        "ChatBotId": req.agentId,
+        "Messages": None,
+        "ChatbotId": req.agentId,
+        "SessionId": None,
+        "SessionParams": {"UsePublishedVersionOnly": False},
+    }
     return await _stack_post(url, _stack_headers(req), payload)
 
 
