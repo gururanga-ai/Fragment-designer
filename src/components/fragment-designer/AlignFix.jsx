@@ -257,22 +257,32 @@ function DiffPanel({ diffs, onJump }) {
   )
 }
 
-// ── TreeItem ─────────────────────────────────────────────────────────────
-function TreeItem({ item, selected, onClick }) {
+// ── TreeItem — draggable for reorder/reparent; dropPos drives the drop indicator ─────
+function TreeItem({ item, selected, dragged, dropPos, onClick, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }) {
   const { depth, type, title, isElement } = item
   const color = isElement ? '#64748B' : '#1E3A8A'
   return (
     <div
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       onClick={onClick}
-      className={`cursor-pointer flex items-center gap-1 px-2 py-1 text-xs rounded mx-1 my-0.5
-        ${selected ? 'bg-[#DBEAFE] font-semibold' : 'hover:bg-[#F1F5F9]'}`}
+      className={`relative cursor-grab active:cursor-grabbing flex items-center gap-1 px-2 py-1 text-xs rounded mx-1 my-0.5
+        ${selected ? 'bg-[#DBEAFE] font-semibold' : 'hover:bg-[#F1F5F9]'}
+        ${dragged ? 'opacity-40' : ''}
+        ${dropPos === 'inside' ? 'outline outline-2 outline-[#3B82F6] bg-[#EFF6FF]' : ''}`}
       style={{ paddingLeft: 8 + depth * 14 }}
     >
+      {dropPos === 'before' && <div className="absolute left-0 right-0 -top-0.5 h-0.5 bg-[#3B82F6] rounded" />}
       <span className="shrink-0 text-[10px] font-bold rounded px-1" style={{ backgroundColor: color + '20', color }}>
         {isElement ? 'E' : 'C'}
       </span>
       <span className="truncate" style={{ color }}>{type}</span>
       {title && <span className="text-[#94A3B8] truncate ml-1">— {title}</span>}
+      {dropPos === 'after' && <div className="absolute left-0 right-0 -bottom-0.5 h-0.5 bg-[#3B82F6] rounded" />}
     </div>
   )
 }
@@ -792,6 +802,85 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
     setFrag(newFrag)
   }
 
+  // ── Tree drag-and-drop: reorder siblings or reparent into another container ──
+  const [dragPath, setDragPath] = useState(null)
+  const [dropTarget, setDropTarget] = useState(null) // { path, pos: 'before'|'after'|'inside' }
+
+  const isDescendantPath = (ancestor, path) => ancestor.length <= path.length && ancestor.every((v, i) => v === path[i])
+  const samePath = (a, b) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b)
+
+  const moveNode = (fromPath, toPath, pos) => {
+    if (!fromPath || fromPath.length === 0) return
+    if (samePath(fromPath, toPath) || isDescendantPath(fromPath, toPath)) return
+    const newFrag = structuredClone(frag)
+    const fromParentPath = fromPath.slice(0, -1)
+    const fromIdx = fromPath[fromPath.length - 1]
+    const fromArr = getByPath(newFrag, fromParentPath)
+    if (!Array.isArray(fromArr)) return
+    const [movedNode] = fromArr.splice(fromIdx, 1)
+    if (!movedNode) return
+
+    let targetArr, insertIdx
+    if (pos === 'inside') {
+      const targetNode = getByPath(newFrag, toPath)
+      if (!targetNode || typeof targetNode !== 'object') return
+      if (!targetNode.Slots) targetNode.Slots = {}
+      const slotKey = Object.keys(targetNode.Slots).includes('Default') ? 'Default' : (Object.keys(targetNode.Slots)[0] || 'Default')
+      if (!Array.isArray(targetNode.Slots[slotKey])) targetNode.Slots[slotKey] = []
+      targetArr = targetNode.Slots[slotKey]
+      insertIdx = targetArr.length
+    } else {
+      const toParentPath = toPath.slice(0, -1)
+      let toIdx = toPath[toPath.length - 1]
+      targetArr = getByPath(newFrag, toParentPath)
+      if (!Array.isArray(targetArr)) return
+      if (samePath(fromParentPath, toParentPath) && toIdx > fromIdx) toIdx -= 1
+      insertIdx = pos === 'before' ? toIdx : toIdx + 1
+    }
+    targetArr.splice(insertIdx, 0, movedNode)
+    setFrag(newFrag)
+    setSelPath([])
+  }
+
+  const handleDragStart = (path) => (e) => {
+    e.stopPropagation()
+    setDragPath(path)
+    e.dataTransfer.effectAllowed = 'move'
+    try { e.dataTransfer.setData('text/plain', JSON.stringify(path)) } catch {}
+  }
+  const handleDragEnd = () => { setDragPath(null); setDropTarget(null) }
+  const handleDragOverItem = (path, isElementTarget) => (e) => {
+    if (!dragPath) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    if (samePath(path, dragPath) || isDescendantPath(dragPath, path)) { setDropTarget(null); return }
+    const rect = e.currentTarget.getBoundingClientRect()
+    const ratio = (e.clientY - rect.top) / rect.height
+    const pos = (!isElementTarget && ratio > 0.25 && ratio < 0.75) ? 'inside' : (ratio < 0.5 ? 'before' : 'after')
+    setDropTarget({ path, pos })
+  }
+  const handleDragLeaveItem = () => setDropTarget(null)
+  const handleDropItem = (path) => (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (dragPath && dropTarget && samePath(dropTarget.path, path)) moveNode(dragPath, dropTarget.path, dropTarget.pos)
+    setDragPath(null)
+    setDropTarget(null)
+  }
+  const handleRootDragOver = (e) => {
+    if (!dragPath || dragPath.length === 0) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDropTarget({ path: [], pos: 'inside' })
+  }
+  const handleRootDrop = (e) => {
+    e.preventDefault()
+    if (dragPath) moveNode(dragPath, [], 'inside')
+    setDragPath(null)
+    setDropTarget(null)
+  }
+
   const moveInSlot = (dir) => {
     if (selPath.length < 1) return
     const idx = selPath[selPath.length - 1]
@@ -966,8 +1055,12 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
           <p className="text-xs font-bold text-[#64748B] px-3 mb-1 uppercase tracking-wider">Fragment Tree</p>
           <div
             onClick={() => setSelPath([])}
+            onDragOver={handleRootDragOver}
+            onDragLeave={() => setDropTarget(null)}
+            onDrop={handleRootDrop}
             className={`cursor-pointer flex items-center gap-1 px-2 py-1 text-xs rounded mx-1 my-0.5
-              ${selPath.length === 0 ? 'bg-[#DBEAFE] font-semibold text-[#1E3A8A]' : 'hover:bg-[#F1F5F9]'}`}
+              ${selPath.length === 0 ? 'bg-[#DBEAFE] font-semibold text-[#1E3A8A]' : 'hover:bg-[#F1F5F9]'}
+              ${dropTarget?.pos === 'inside' && dropTarget.path.length === 0 ? 'outline outline-2 outline-[#3B82F6] bg-[#EFF6FF]' : ''}`}
           >
             <span className="shrink-0 text-[10px] font-bold rounded px-1 bg-[#DBEAFE] text-[#1E3A8A]">C</span>
             <span className="truncate">{frag.Container || 'root'}</span>
@@ -975,8 +1068,15 @@ export default function AlignFix({ fragment, onClose, onSave, originalFragment =
           </div>
           {tree.slice(1).map((item, i) => (
             <TreeItem key={i} item={item}
-              selected={JSON.stringify(item.path) === JSON.stringify(selPath)}
-              onClick={() => setSelPath(item.path)} />
+              selected={samePath(item.path, selPath)}
+              dragged={samePath(item.path, dragPath)}
+              dropPos={samePath(dropTarget?.path, item.path) ? dropTarget.pos : null}
+              onClick={() => setSelPath(item.path)}
+              onDragStart={handleDragStart(item.path)}
+              onDragOver={handleDragOverItem(item.path, item.isElement)}
+              onDragLeave={handleDragLeaveItem}
+              onDrop={handleDropItem(item.path)}
+              onDragEnd={handleDragEnd} />
           ))}
         </div>
 
