@@ -798,14 +798,23 @@ async def stack_chat_start(req: StackChatStartRequest):
 
 @app.post("/api/stack/chat/send")
 async def stack_chat_send(req: StackChatSendRequest):
-    """Test-flow step 2: send a message into the started session. UNCONFIRMED payload shape —
-    inferred from the startChat contract and the agentTrace log's own internal Process tag
-    ("AID::/chatbot/chat/stream"); no real captured request for this exact endpoint was available.
-    If this 404s/400s, the field names or path here are the first thing to check against a real
-    HAR capture of the actual glean.com-style chat UI talking to this stack."""
+    """Test-flow step 2: send a message into the already-started session. A separate
+    chatbot/chat/stream endpoint 404'd — confirmed there's no such route. Per the user: the SAME
+    startChat endpoint is reused for every turn, distinguished by SessionId (null on the first
+    call, populated on every following one) and Messages (null to just open a session, populated
+    with the user's turn to actually converse). The exact Messages array item shape is still
+    UNCONFIRMED — {"Text": "..."} is a guess matching this API's PascalCase field convention
+    (ChatBotId/SessionParams/etc.) — if this still 404s/400s, that item shape is the next thing to
+    check against a real captured request."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
-    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/chat/stream"
-    payload = {"ChatbotId": req.chatbotId, "SessionId": req.sessionId, "Message": req.message, "SessionParams": {}}
+    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/startChat"
+    payload = {
+        "ChatBotId": req.chatbotId,
+        "Messages": [{"Text": req.message}],
+        "ChatbotId": req.chatbotId,
+        "SessionId": req.sessionId,
+        "SessionParams": {},
+    }
     return await _stack_post(url, _stack_headers(req), payload)
 
 
