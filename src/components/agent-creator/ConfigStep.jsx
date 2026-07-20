@@ -462,7 +462,7 @@ export default function ConfigStep({
     if (flowApplied > 0) parts.push(`${flowApplied} flow action(s)`)
     if (errors.length) parts.push(...errors.map(e => `⚠ ${e}`))
     setStatus(`✓ Done — ${parts.join(' · ') || 'No data applied'}`)
-    setTimeout(onDone, 2000)
+    onDone()
   }
 
   const handleQuickFill = async (key) => {
@@ -678,6 +678,8 @@ function FullAutofillModal({ onClose, onRun }) {
   const [enhancing, setEnhancing] = useState(false)
   const [enhanced, setEnhanced] = useState(false)
   const [layoutPickerOpen, setLayoutPickerOpen] = useState(false)
+  const [lastLayoutChoice, setLastLayoutChoice] = useState(null)
+  const [hasRun, setHasRun] = useState(false)
 
   // "Run Autofill" no longer generates a fragment blind — it first asks the user to pick a
   // concrete layout (or "No Fragment"), and that choice drives both flow shaping and fragment
@@ -689,8 +691,19 @@ function FullAutofillModal({ onClose, onRun }) {
 
   const handleLayoutChosen = (layoutChoice) => {
     setLayoutPickerOpen(false)
+    setLastLayoutChoice(layoutChoice)
+    setHasRun(true)
     setRunning(true)
-    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => { setRunning(false); onClose() })
+    // Stays open on completion — the run can partially fail (e.g. flow ok, fragment 401)
+    // and closing on a timer buried that. onDone here just stops the spinner; the user
+    // reviews the status line and explicitly Confirms (closes) or Retries.
+    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => setRunning(false))
+  }
+
+  const handleRetry = () => {
+    if (!lastLayoutChoice || running) return
+    setRunning(true)
+    onRun(desc.trim(), deepResearch, lastLayoutChoice, setStatus, () => setRunning(false))
   }
 
   const handleEnhance = async () => {
@@ -766,16 +779,37 @@ function FullAutofillModal({ onClose, onRun }) {
           </div>
         )}
         <div className="flex gap-2 items-center">
-          <button
-            onClick={handleRun}
-            disabled={running || enhancing || !desc.trim()}
-            className="px-4 py-2 bg-[#166534] text-[#86EFAC] rounded text-sm font-semibold hover:bg-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {running ? '⏳ Running...' : '⚡ Run Autofill'}
-          </button>
-          <button onClick={onClose} disabled={running} className="px-4 py-2 bg-[#F1F5F9] text-[#374151] rounded text-sm hover:bg-[#E2E8F0]">
-            {running ? 'Please wait...' : 'Cancel'}
-          </button>
+          {hasRun ? (
+            <>
+              <button
+                onClick={handleRetry}
+                disabled={running || enhancing}
+                className="px-4 py-2 bg-[#DBEAFE] text-[#1E3A8A] rounded text-sm font-semibold hover:bg-[#BFDBFE] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {running ? '⏳ Retrying...' : '🔁 Retry'}
+              </button>
+              <button
+                onClick={onClose}
+                disabled={running}
+                className="px-4 py-2 bg-[#166534] text-[#86EFAC] rounded text-sm font-semibold hover:bg-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                ✓ Confirm & Close
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={handleRun}
+                disabled={running || enhancing || !desc.trim()}
+                className="px-4 py-2 bg-[#166534] text-[#86EFAC] rounded text-sm font-semibold hover:bg-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {running ? '⏳ Running...' : '⚡ Run Autofill'}
+              </button>
+              <button onClick={onClose} disabled={running} className="px-4 py-2 bg-[#F1F5F9] text-[#374151] rounded text-sm hover:bg-[#E2E8F0]">
+                {running ? 'Please wait...' : 'Cancel'}
+              </button>
+            </>
+          )}
           <span className="text-xs text-[#94A3B8] ml-auto">Ctrl+Enter to run</span>
         </div>
       </div>
