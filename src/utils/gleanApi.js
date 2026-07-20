@@ -90,17 +90,29 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
 // fallback (which uses a session that isn't the caller's own, and in a long-idle deployment is
 // often just stale) after retries are exhausted — long calls like flow/fragment generation are
 // exactly the ones likely to outlive the worker's lifetime, short ones like config rarely do.
+// Tags "all retries were disconnects" distinctly from "not a disconnect at all" (which should
+// propagate immediately, not fall back), and keeps every individual attempt's real error text
+// instead of collapsing to the last one — collapsing was masking what was actually going wrong
+// (mid-stream lifetime-cap kill vs. instant connect failure vs. something else) behind whatever
+// the eventual server-proxy fallback said instead, which is a different failure entirely.
+class RelayDisconnectError extends Error {
+  constructor(attempts) {
+    super(`extension relay disconnected on all ${attempts.length} attempt(s): ` + attempts.map((m, i) => `[${i + 1}] ${m}`).join(' | '))
+    this.name = 'RelayDisconnectError'
+  }
+}
+
 async function relayWithRetry(built, onPartial, signal, retries = 2) {
-  let lastErr
+  const attempts = []
   for (let i = 0; i <= retries; i++) {
     try {
       return await relayViaExtension(built, onPartial, signal)
     } catch (err) {
       if (signal?.aborted || !/disconnected/i.test(err.message || '')) throw err
-      lastErr = err
+      attempts.push(err.message || String(err))
     }
   }
-  throw lastErr
+  throw new RelayDisconnectError(attempts)
 }
 
 /**
@@ -133,13 +145,19 @@ export async function gleanChat({ conversation, chatId, agent_context, uploadedF
     try {
       return await relayWithRetry(built, onPartial, signal)
     } catch (err) {
-      if (signal?.aborted || !/disconnected/i.test(err.message || '')) throw err
+      if (signal?.aborted || !(err instanceof RelayDisconnectError)) throw err
       // Retries (relayWithRetry) already gave the extension multiple fresh-port chances using the
       // caller's own live session — falling back here means those all failed too, so this really
       // is a last resort. Uses the backend's stored session, not the caller's own — a known,
       // visible degradation, not silent.
       onFallback?.()
-      return proxyCall()
+      try {
+        return await proxyCall()
+      } catch (proxyErr) {
+        // Surface BOTH failures — losing the relay's real error behind the proxy's generic 401
+        // is what made this undiagnosable last time.
+        throw new Error(`${err.message}; fallback also failed: ${proxyErr.message}`)
+      }
     }
   }
 
@@ -176,9 +194,13 @@ export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json,
     try {
       return await relayWithRetry(built, onPartial, signal)
     } catch (err) {
-      if (signal?.aborted || !/disconnected/i.test(err.message || '')) throw err
+      if (signal?.aborted || !(err instanceof RelayDisconnectError)) throw err
       onFallback?.()
-      return proxyCall()
+      try {
+        return await proxyCall()
+      } catch (proxyErr) {
+        throw new Error(`${err.message}; fallback also failed: ${proxyErr.message}`)
+      }
     }
   }
 
