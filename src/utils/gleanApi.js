@@ -83,6 +83,26 @@ function relayViaExtension({ url, params, body }, onPartial, signal) {
   })
 }
 
+// A mid-stream port disconnect (Chrome's hard cap on a single MV3 background-worker operation —
+// no keepalive can bypass it, see background.js's comment) is not an auth failure: the user's
+// own Glean session is still fine, only that one relay connection got killed. Retrying with a
+// fresh port picks the live session back up. Only fall through to the shared server-proxy
+// fallback (which uses a session that isn't the caller's own, and in a long-idle deployment is
+// often just stale) after retries are exhausted — long calls like flow/fragment generation are
+// exactly the ones likely to outlive the worker's lifetime, short ones like config rarely do.
+async function relayWithRetry(built, onPartial, signal, retries = 2) {
+  let lastErr
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await relayViaExtension(built, onPartial, signal)
+    } catch (err) {
+      if (signal?.aborted || !/disconnected/i.test(err.message || '')) throw err
+      lastErr = err
+    }
+  }
+  throw lastErr
+}
+
 /**
  * Stream a generic Glean /chat request (Agent Creator).
  * onPartial(text) is called with the growing response as it streams.
@@ -111,14 +131,13 @@ export async function gleanChat({ conversation, chatId, agent_context, uploadedF
       signal,
     }).then(r => r.json())
     try {
-      return await relayViaExtension(built, onPartial, signal)
+      return await relayWithRetry(built, onPartial, signal)
     } catch (err) {
       if (signal?.aborted || !/disconnected/i.test(err.message || '')) throw err
-      // The extension's background worker can be evicted mid-request on longer calls (Chrome
-      // enforces a hard lifetime cap on a single background-worker operation that no keepalive
-      // can bypass) — fall back to the shared server proxy for this one call rather than failing
-      // outright. Uses the backend's stored session, not the caller's own — a known, visible
-      // degradation, not silent.
+      // Retries (relayWithRetry) already gave the extension multiple fresh-port chances using the
+      // caller's own live session — falling back here means those all failed too, so this really
+      // is a last resort. Uses the backend's stored session, not the caller's own — a known,
+      // visible degradation, not silent.
       onFallback?.()
       return proxyCall()
     }
@@ -155,7 +174,7 @@ export async function gleanRunWorkflow({ prompt, uploadedFileIds, fragment_json,
       signal,
     }).then(r => r.json())
     try {
-      return await relayViaExtension(built, onPartial, signal)
+      return await relayWithRetry(built, onPartial, signal)
     } catch (err) {
       if (signal?.aborted || !/disconnected/i.test(err.message || '')) throw err
       onFallback?.()
