@@ -287,7 +287,7 @@ class StackChatEndRequest(StackChatAuthBase):
 
 class StackChatTraceRequest(StackChatAuthBase):
     sessionId: str
-    turn: str = "TURN1"
+    turn: str | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────
@@ -842,11 +842,17 @@ async def stack_chat_end(req: StackChatEndRequest):
 
 @app.post("/api/stack/chat/trace")
 async def stack_chat_trace(req: StackChatTraceRequest):
-    """Test-flow step 3: query the recorded trace for a turn. Payload shape confirmed against a
-    real captured request/response for this exact endpoint."""
+    """Test-flow step 3: query the recorded trace for a session. Query shape confirmed against a
+    real captured request/response for this exact endpoint. Deliberately queries by SessionId
+    ONLY, not SessionId+TurnProvoked — a session is not guaranteed to be fresh (Composer's
+    startChat, called with no explicit SessionId, can attach to an existing session for the same
+    ChatBotId/user rather than always creating turn 1), confirmed by a real trace coming back
+    tagged TurnProvoked:"TURN2" with "First entry: false" in its own log. The caller picks the
+    most recent record out of however many this returns."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
     url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/agent/agentTrace"
-    payload = {"Query": f"SessionId = '{req.sessionId}' AND TurnProvoked = '{req.turn}'"}
+    query = f"SessionId = '{req.sessionId}'" + (f" AND TurnProvoked = '{req.turn}'" if req.turn else "")
+    payload = {"Query": query}
     return await _stack_post(url, _stack_headers(req), payload)
 
 

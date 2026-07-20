@@ -207,18 +207,22 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
       setTestDebug({ ...debug })
 
       // Trace recording may lag slightly behind the chat call returning — retry a few times
-      // with a short pause before concluding the turn genuinely didn't execute.
+      // with a short pause before concluding the turn genuinely didn't execute. Queries by
+      // SessionId only (no turn filter) — a session isn't guaranteed fresh (Composer can attach
+      // an existing session rather than always starting at turn 1), so this can return multiple
+      // prior turns too; always take the most recently created record, which is the one for the
+      // message THIS run just sent.
       let parsed = []
       let lastTraceResp = null
       for (let attempt = 1; attempt <= 4 && parsed.length === 0; attempt++) {
         setTestStatus({ state: 'busy', message: `Step 4/4: Fetching execution trace${attempt > 1 ? ` (retry ${attempt - 1})` : ''}…` })
         if (attempt > 1) await new Promise(res => setTimeout(res, 1200))
-        const traceResp = await stackChatTrace({ ...activeSession, sessionId, turn: 'TURN1' })
+        const traceResp = await stackChatTrace({ ...activeSession, sessionId })
         lastTraceResp = traceResp
-        const records = traceResp?.data || []
-        parsed = records.map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
+        const records = [...(traceResp?.data || [])].sort((a, b) => (b.CreatedTimestamp || '').localeCompare(a.CreatedTimestamp || ''))
+        parsed = records.slice(0, 1).map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
       }
-      debug.request.trace = { sessionId, turn: 'TURN1' }; debug.response.trace = lastTraceResp
+      debug.request.trace = { sessionId }; debug.response.trace = lastTraceResp
       setTestDebug({ ...debug })
       setTestTraces(parsed)
       setTestStatus(parsed.length > 0 ? null : { state: 'error', message: 'Trace query returned no records after 4 attempts — see the raw request/response payloads below for every step.' })
