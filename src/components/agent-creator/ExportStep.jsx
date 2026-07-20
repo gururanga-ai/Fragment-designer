@@ -234,13 +234,25 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
         if (attempt > 1) await new Promise(res => setTimeout(res, 1200))
         const traceResp = await stackChatTrace({ ...activeSession, sessionId, turn: turnId })
         lastTraceResp = traceResp
-        const records = [...(traceResp?.data || [])].sort((a, b) => (b.CreatedTimestamp || '').localeCompare(a.CreatedTimestamp || ''))
+        // The sessionId/turn query params don't reliably scope server-side (confirmed: a query
+        // for one session/turn came back with totalCount in the tens of thousands and a trace
+        // tree for a completely different agent) — filter client-side on the record's own
+        // SessionId field instead of trusting the query to have already done it.
+        const records = [...(traceResp?.data || [])]
+          .filter(r => r.SessionId === sessionId)
+          .sort((a, b) => (b.CreatedTimestamp || '').localeCompare(a.CreatedTimestamp || ''))
         parsed = records.slice(0, 1).map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
       }
       debug.request.trace = { sessionId, turn: turnId }; debug.response.trace = lastTraceResp
       setTestDebug({ ...debug })
       setTestTraces(parsed)
-      setTestStatus(parsed.length > 0 ? null : { state: 'error', message: 'Trace query returned no records after 4 attempts — see the raw request/response payloads below for every step.' })
+      const rawCount = lastTraceResp?.data?.length || 0
+      setTestStatus(parsed.length > 0 ? null : {
+        state: 'error',
+        message: rawCount > 0
+          ? `agentTrace returned ${rawCount} record(s) but NONE had SessionId matching "${sessionId}" — the query's sessionId/turn params aren't actually scoping server-side (see totalCount in the raw trace response below). This isn't your test's trace.`
+          : 'Trace query returned no records after 4 attempts — see the raw request/response payloads below for every step.',
+      })
 
       // Best-effort cleanup — a failure here doesn't affect anything the user cares about,
       // the trace is already fetched, so it's not worth surfacing as a test failure.
