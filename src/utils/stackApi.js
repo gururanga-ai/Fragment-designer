@@ -86,8 +86,8 @@ export async function stackChatSend({ stackName, domain, accessToken, org, facil
 }
 
 /** Test-flow step 3: query the recorded execution trace for a turn. */
-export async function stackChatTrace({ stackName, domain, accessToken, org, facilityId, businessUnit, sessionId, turn }) {
-  return _stackPost('/api/stack/chat/trace', { stackName, domain, accessToken, org, facilityId, businessUnit, sessionId, turn }, 'Fetch trace')
+export async function stackChatTrace({ stackName, domain, accessToken, org, facilityId, businessUnit, agentId, sessionId, turn }) {
+  return _stackPost('/api/stack/chat/trace', { stackName, domain, accessToken, org, facilityId, businessUnit, agentId, sessionId, turn }, 'Fetch trace')
 }
 
 /** Test-flow cleanup: ends the test session. Best-effort — caller should not fail the run on error. */
