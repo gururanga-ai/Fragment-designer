@@ -134,7 +134,7 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
   const [testTraces, setTestTraces] = useState(null)
   const [testDebug, setTestDebug] = useState(null) // { request: {start,send,trace}, response: {start,send,trace,error} }
   const [testQuickErrors, setTestQuickErrors] = useState([]) // data.DataResponse.errorsFound from the chat/send response itself
-  const [debugOpen, setDebugOpen] = useState(false)
+  const [debugOpen, setDebugOpen] = useState(true) // always visible by default, not just on error
   const [fixingKey, setFixingKey] = useState(null)
   const [fixStatusByKey, setFixStatusByKey] = useState({})
   const jsonStr = JSON.stringify(agentJson, null, 2)
