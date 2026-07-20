@@ -211,24 +211,24 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
       // (data.DataResponse.errorsFound) — surface it immediately as a fallback, since it doesn't
       // depend on agentTrace succeeding at all.
       setTestQuickErrors(sendResp?.data?.DataResponse?.errorsFound || [])
+      // The SAME response also tells us exactly which turn this was (data.TurnId, e.g. "TURN1")
+      // — querying agentTrace with that real value (not a hardcoded "TURN1" guess, and not
+      // omitting the turn filter, both of which returned zero records) is what actually matches.
+      const turnId = sendResp?.data?.TurnId
 
       // Trace recording may lag slightly behind the chat call returning — retry a few times
-      // with a short pause before concluding the turn genuinely didn't execute. Queries by
-      // SessionId only (no turn filter) — a session isn't guaranteed fresh (Composer can attach
-      // an existing session rather than always starting at turn 1), so this can return multiple
-      // prior turns too; always take the most recently created record, which is the one for the
-      // message THIS run just sent.
+      // with a short pause before concluding the turn genuinely didn't execute.
       let parsed = []
       let lastTraceResp = null
       for (let attempt = 1; attempt <= 4 && parsed.length === 0; attempt++) {
         setTestStatus({ state: 'busy', message: `Step 4/4: Fetching execution trace${attempt > 1 ? ` (retry ${attempt - 1})` : ''}…` })
         if (attempt > 1) await new Promise(res => setTimeout(res, 1200))
-        const traceResp = await stackChatTrace({ ...activeSession, sessionId })
+        const traceResp = await stackChatTrace({ ...activeSession, sessionId, turn: turnId })
         lastTraceResp = traceResp
         const records = [...(traceResp?.data || [])].sort((a, b) => (b.CreatedTimestamp || '').localeCompare(a.CreatedTimestamp || ''))
         parsed = records.slice(0, 1).map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
       }
-      debug.request.trace = { sessionId }; debug.response.trace = lastTraceResp
+      debug.request.trace = { sessionId, turn: turnId }; debug.response.trace = lastTraceResp
       setTestDebug({ ...debug })
       setTestTraces(parsed)
       setTestStatus(parsed.length > 0 ? null : { state: 'error', message: 'Trace query returned no records after 4 attempts — see the raw request/response payloads below for every step.' })
