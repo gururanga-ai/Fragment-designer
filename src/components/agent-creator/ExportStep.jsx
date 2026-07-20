@@ -204,16 +204,25 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
 
       setTestStatus({ state: 'busy', message: `Step 3/4: Sending "${TEST_MESSAGE}"…` })
       const sendReq = { chatbotId: agentIdForChat, sessionId, message: TEST_MESSAGE }
-      const sendResp = await stackChatSend({ ...activeSession, ...sendReq })
+      let sendResp = await stackChatSend({ ...activeSession, ...sendReq })
       debug.request.send = sendReq; debug.response.send = sendResp
+      setTestDebug({ ...debug })
+      // A session's very first turn (TurnId "TURN1") has consistently returned zero agentTrace
+      // records across multiple different endpoint/payload fixes — every real trace we've
+      // actually gotten back has been turn 2+ on a session with prior history. Whatever the
+      // platform-side reason (indexing/replication lag specific to a brand-new session), the
+      // reliable fix is to not rely on turn 1 at all: send the same message again so we have a
+      // turn 2 to query instead.
+      setTestStatus({ state: 'busy', message: `Step 3/4: Sending "${TEST_MESSAGE}" (2nd turn — turn 1 traces are unreliable)…` })
+      sendResp = await stackChatSend({ ...activeSession, ...sendReq })
+      debug.request.send2 = sendReq; debug.response.send2 = sendResp
       setTestDebug({ ...debug })
       // The chat response itself carries a summary of any error the turn hit
       // (data.DataResponse.errorsFound) — surface it immediately as a fallback, since it doesn't
       // depend on agentTrace succeeding at all.
       setTestQuickErrors(sendResp?.data?.DataResponse?.errorsFound || [])
-      // The SAME response also tells us exactly which turn this was (data.TurnId, e.g. "TURN1")
-      // — querying agentTrace with that real value (not a hardcoded "TURN1" guess, and not
-      // omitting the turn filter, both of which returned zero records) is what actually matches.
+      // The SAME response also tells us exactly which turn this was (data.TurnId, e.g. "TURN2")
+      // — querying agentTrace with that real value is what actually matches.
       const turnId = sendResp?.data?.TurnId
 
       // Trace recording may lag slightly behind the chat call returning — retry a few times
@@ -385,7 +394,7 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
                   </button>
                   {(debugOpen || testStatus?.state === 'error') && (
                     <div className="p-2 max-h-64 overflow-y-auto bg-[#0F172A]">
-                      {['start', 'send', 'trace'].map(step => (
+                      {['start', 'send', 'send2', 'trace'].map(step => (
                         (testDebug.request[step] || testDebug.response[step]) && (
                           <div key={step} className="mb-2">
                             <div className="text-[10px] font-bold text-[#93C5FD] uppercase mb-0.5">{step}</div>
