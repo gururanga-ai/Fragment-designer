@@ -346,6 +346,18 @@ GENERAL FLOW ACTION RULES
   change a transformTable's output field names, or if a request touches the fragment side too,
   verify/update the fragment's bindings to match exactly — a chart mapped to a field name the
   transformTable never produced renders empty with no visible error, which is easy to miss
+- FULL ALIGNMENT CHAIN — every displayed field must be traceable, EXACT CASE INCLUDED, through every
+  link: SQL column alias -> transformTable sourceFieldName/targetFieldName -> renderUI.dataMap
+  dataset key -> fragment Init.DataSourcePath -> table column Sort.SortBy -> table cell Input.
+  Field names are case-sensitive throughout — if SQL aliases a column AS BatchTrackerStatus, every
+  downstream layer must use "BatchTrackerStatus" exactly, never "batchTrackerStatus" or
+  "batchTracker". A single broken link anywhere in this chain (case mismatch included) is why rows
+  fetch successfully but render empty or a column shows nothing. Same chain applies to filters:
+  filter-panel Attribute.Input="batchId" is only usable downstream as {:Filters.batchId} — exact
+  same casing, not a normalized/renamed version of it
+- TEXTBOX FILTER GUARDS — a conditions check of only "Filters.<field>!=null" is not enough for a
+  text filter; an empty-but-present string ("") passes that check and produces a broken/no-op SQL
+  predicate. Guard textbox filters with BOTH: "Filters.<field>!=null,Filters.<field>!=''"
 - CONVERSATIONAL / NON-UI AGENTS — decide this FIRST, before picking a response shape: if the
   request describes a conversational, chat-based, Q&A, or purely data-lookup agent (no dashboard,
   table, chart, screen, or rendered UI is asked for), do NOT include a renderUI action — end the
@@ -610,7 +622,9 @@ When generating sql actions:
   the same or a related table (Bitbucket) and schema/data-dictionary docs (Confluence) rather than
   pattern-matching a name that merely sounds right for the domain
 - Select only required columns
-- Alias columns cleanly for downstream use
+- Alias columns cleanly for downstream use — explicit PascalCase aliases matching the exact casing
+  used throughout the rest of the fragment/flow (e.g. BPS.BATCH_ID AS BatchId, not batch_id or
+  batchId); never mix alias casing styles within the same agent
 - Use mapped values where possible
 - If filters are needed, map them before the sql action
 - Keep SQL production-style, not pseudo-SQL

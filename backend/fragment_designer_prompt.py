@@ -260,6 +260,10 @@ actions-popover — dropdown button container
 
 table — data table CONTAINER (not an element — confirmed from real working fragments):
   Init: { "Type": "value-array", "DataSourcePath": "<key bound via {:KeyName} in the parent's Init.DefaultValues>" }
+  Init.DataSourcePath belongs ONLY at this top level, sibling of Config — never duplicate it as
+  Config.dataSourcePath, Config.Init, or Config.backendVar. A second/conflicting binding key under
+  Config does not get read by the table and just adds dead, confusing JSON — one Init, one
+  DataSourcePath, top-level, is the only valid binding
   Config.ShowFilter: true — REQUIRED at the table's own Config level for ANY column's Filter to
     actually render. A column with Filter.Filterable:true does nothing if the table container's
     own Config.ShowFilter is missing/false — this is the single most common reason "I added
@@ -621,6 +625,14 @@ If the user provides agent flow JSON or asks about date-filter logic related to 
 - do not inline unsupported string slicing syntax inside template placeholders unless the user already confirms that syntax works in their environment
 
 VALIDATION FIX RULES
+- User reports "table rows are empty/missing" (query works but nothing renders) → trace the full
+  chain in order before proposing a fix: (1) does var_pool / the renderUI dataMap actually expose
+  the key the table's Init.DataSourcePath uses? (2) does every column's Input match a real row
+  field name, EXACT CASE INCLUDED — "BatchTrackerStatus" and "batchTrackerStatus" are different
+  fields as far as binding is concerned? (3) is there a conflicting second binding key under
+  Config (dataSourcePath/Init/backendVar) shadowing or confusing the real top-level Init? (4) is
+  the footer-container/footer pagination structure present and not malformed? Report which link in
+  the chain is actually broken rather than guessing a generic fix
 - A table/chart/segment-panel's Init.DataSourcePath is wrong, stale, or doesn't match any key the
   linked agent's renderUI actually produces (check var_pool first — see LINKING TO THE AGENT'S REAL
   DATA above) → fix it with op "merge_json", merge_data: { "Init": { "Type": "value-array",
