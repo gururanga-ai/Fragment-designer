@@ -221,7 +221,7 @@ export default function ConfigStep({
     }
   }
 
-  const runFullAutofill = async (desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds = [], skipResearch = false) => {
+  const runFullAutofill = async (desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds = [], skipResearch = false, skipFragment = false) => {
     // New autofill = new Glean context
     onGleanChatIdChange(null)
     onGleanHistoryChange([])
@@ -328,7 +328,7 @@ export default function ConfigStep({
     // Whether this step runs at all is now decided by the user's explicit layout-picker choice
     // (including "No Fragment") rather than a fuzzy soft/hard-UI-word regex guess over the prompt.
     const hasRenderUI = Array.isArray(flowData) && flowData.some(a => a.type === 'renderUI')
-    if (!noFragment && (hasRenderUI || layoutChoice)) {
+    if (!noFragment && !skipFragment && (hasRenderUI || layoutChoice)) {
       // If the flow step's renderUI action already names an inputJSON, that name IS the contract —
       // it must be used as-is, or the flow references a content item that doesn't exist. Inventing
       // a different name here (as this used to do) produces a mismatch: renderUI.inputJSON points
@@ -490,6 +490,7 @@ export default function ConfigStep({
     const parts = []
     if (configApplied > 0) parts.push(`${configApplied} config field(s)`)
     if (flowApplied > 0) parts.push(`${flowApplied} flow action(s)`)
+    if (skipFragment) parts.push('fragment skipped — generate it later from "Edit in Designer" on the renderUI action')
     if (errors.length) parts.push(...errors.map(e => `⚠ ${e}`))
     setStatus(`✓ Done — ${parts.join(' · ') || 'No data applied'}`)
     onDone()
@@ -671,7 +672,7 @@ export default function ConfigStep({
       {autofillOpen && (
         <FullAutofillModal
           onClose={() => { setAutofillOpen(false); setAutofillStatus('') }}
-          onRun={(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds, skipResearch) => runFullAutofill(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds, skipResearch)}
+          onRun={(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds, skipResearch, skipFragment) => runFullAutofill(desc, deepResearch, layoutChoice, setStatus, onDone, uploadedFileIds, skipResearch, skipFragment)}
         />
       )}
     </div>
@@ -713,13 +714,17 @@ function FullAutofillModal({ onClose, onRun }) {
   const [attachments, setAttachments] = useState([]) // { name, fileId, preview }
   const [uploading, setUploading] = useState(false)
   const [skipResearch, setSkipResearch] = useState(false)
+  const [skipFragment, setSkipFragment] = useState(false)
   const fileInputRef = useRef(null)
 
   // "Run Autofill" no longer generates a fragment blind — it first asks the user to pick a
   // concrete layout (or "No Fragment"), and that choice drives both flow shaping and fragment
-  // generation downstream instead of a fuzzy word-guess over the prompt text.
+  // generation downstream instead of a fuzzy word-guess over the prompt text. Skipping fragment
+  // generation entirely (skipFragment checked) makes the layout choice moot for this run, so it
+  // goes straight to run instead of asking.
   const handleRun = () => {
     if (!desc.trim() || running) return
+    if (skipFragment) { handleLayoutChosen(null); return }
     setLayoutPickerOpen(true)
   }
 
@@ -733,13 +738,16 @@ function FullAutofillModal({ onClose, onRun }) {
     // Stays open on completion — the run can partially fail (e.g. flow ok, fragment 401)
     // and closing on a timer buried that. onDone here just stops the spinner; the user
     // reviews the status line and explicitly Confirms (closes) or Retries.
-    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => setRunning(false), fileIds(), skipResearch)
+    onRun(desc.trim(), deepResearch, layoutChoice, setStatus, () => setRunning(false), fileIds(), skipResearch, skipFragment)
   }
 
   const handleRetry = () => {
-    if (!lastLayoutChoice || running) return
+    if (running) return
+    // A prior skip-fragment run never picked a layout — if the user has since unchecked
+    // skip-fragment, retry needs to ask for one now rather than silently running without.
+    if (!skipFragment && !lastLayoutChoice) { setLayoutPickerOpen(true); return }
     setRunning(true)
-    onRun(desc.trim(), deepResearch, lastLayoutChoice, setStatus, () => setRunning(false), fileIds(), skipResearch)
+    onRun(desc.trim(), deepResearch, lastLayoutChoice, setStatus, () => setRunning(false), fileIds(), skipResearch, skipFragment)
   }
 
   const uploadFile = useCallback(async (file) => {
@@ -841,6 +849,10 @@ function FullAutofillModal({ onClose, onRun }) {
         <label className="flex items-center gap-1.5 text-xs text-[#374151] -mt-1">
           <input type="checkbox" checked={skipResearch} onChange={e => setSkipResearch(e.target.checked)} className="accent-[#1E3A8A]" />
           Skip company knowledge search — I've already given all the details needed below
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-[#374151] -mt-1">
+          <input type="checkbox" checked={skipFragment} onChange={e => setSkipFragment(e.target.checked)} className="accent-[#1E3A8A]" />
+          Skip fragment for now — just config + flow actions, I'll generate the UI later
         </label>
         <div className="relative">
           <textarea
