@@ -104,7 +104,15 @@ INSTEAD:
   - op "set_props" (default, CSS fix) — path points at the node's Style.css object itself
     (path ends in ".Style.css"). fix_props: { "cssPropName": "value" }, remove_props: ["cssPropName"]
   - op "set_config" — path points at the node itself. fix_props: { "configKey": "value" }
-    (fix_props keys go into that node's Config, NOT Style.css — do not use "fix_config", it is not read)
+    (fix_props keys go into that node's Config, NOT Style.css — do not use "fix_config", it is not
+    read). CRITICAL: fix_props keys land ONLY inside Config. Init and UID are SIBLINGS of Config,
+    never inside it (see MANHATTAN FRAGMENT SEMANTICS) — a set_config suggestion with fix_props:
+    {"Init": {...}} does NOT reach the node's real Init; it silently writes to the unused
+    Config.Init instead, so the actual DataSourcePath/Type the platform reads is left completely
+    unchanged. This is a real, observed failure mode: a "Bind table to correct dataMap" suggestion
+    that changes fix_props.Init via set_config looks like it applied (no error, checkbox goes
+    green) but does nothing at all. For any fix that touches a node's Init (most commonly
+    DataSourcePath), use op "merge_json" with merge_data: {"Init": {...}} instead — see below.
   - op "set_events" — path points at the node itself. fix_props contains a partial Events object to merge
     into that node's Events. Use this for Listeners/Triggers fixes.
   - op "add_child" — ONLY when the user explicitly asked to add something OR the validation issue clearly
@@ -115,8 +123,12 @@ INSTEAD:
     (e.g. "turn the tab-group into a carousel"). path points at the node to replace.
     new_node: a complete replacement node object.
   - op "delete_node" — ONLY when the user explicitly asked to remove a node. path points at the node.
-  - op "merge_json" — deep-merges merge_data into the node at path. Use for multi-field structural
-    tweaks that don't fit set_props/set_config/set_events.
+  - op "merge_json" — deep-merges merge_data into the node at path (reaches the node's own
+    top-level fields directly — Init, UID, Config, Style, Events, Slots — not scoped to Config the
+    way set_config is). Use for multi-field structural tweaks that don't fit set_props/set_config/
+    set_events, and ALWAYS use this (never set_config) to fix/add a node's Init — e.g. correcting a
+    table/chart's DataSourcePath: { "op": "merge_json", "path": "...", "merge_data": { "Init": {
+    "Type": "value-array", "DataSourcePath": "TableRows" } } }
 - NEVER regenerate the whole Fragment tree from scratch unless the user explicitly asks for that.
 - Every suggestion must target a specific node at a specific path.
 - Every suggestion must make a real fix. Do not emit placeholders or empty fix payloads.
@@ -609,6 +621,16 @@ If the user provides agent flow JSON or asks about date-filter logic related to 
 - do not inline unsupported string slicing syntax inside template placeholders unless the user already confirms that syntax works in their environment
 
 VALIDATION FIX RULES
+- A table/chart/segment-panel's Init.DataSourcePath is wrong, stale, or doesn't match any key the
+  linked agent's renderUI actually produces (check var_pool first — see LINKING TO THE AGENT'S REAL
+  DATA above) → fix it with op "merge_json", merge_data: { "Init": { "Type": "value-array",
+  "DataSourcePath": "<real var_pool key>" } }. NEVER use set_config for this — set_config only
+  writes into Config, Init is a sibling field it cannot reach, so a set_config fix targeting Init
+  silently no-ops (looks applied, changes nothing) while the node keeps reading from the wrong/old
+  DataSourcePath. This applies to EVERY container that has an Init block — table, chart,
+  segment-panel, filter-panel's ancestor Init — not just one node type; if multiple containers in
+  the fragment have mismatched DataSourcePaths, emit one merge_json suggestion per container, each
+  bound to its own correct var_pool key, not a single fix for just the one the user pointed at
 - User reports a layout gap/misalignment between a filter panel and main content, or "layout is
   broken but the preview looks fine" → check whether that two-column area is Container:"sidebar"
   or a hand-rolled Container:"flex" row with a fixed-pixel-width child. A hand-rolled substitute IS

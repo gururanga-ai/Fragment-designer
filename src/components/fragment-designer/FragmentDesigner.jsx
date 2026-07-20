@@ -107,8 +107,16 @@ export function applyGleanSuggestion(fragmentRoot, suggestion) {
   }
   if (op === 'set_config') {
     const node = target || {}
+    // Init/UID are siblings of Config, never inside it — a suggestion that puts "Init" (or "UID")
+    // in fix_props (the model reaching for the right field but the wrong op, e.g. a DataSourcePath
+    // fix) would otherwise silently write to node.Config.Init, a phantom location nothing reads,
+    // while the real node.Init stays unchanged — looks applied, does nothing. Route those specific
+    // keys to the node itself; everything else still goes into Config as intended.
+    const { Init: initFix, UID: uidFix, ...configFix } = suggestion.fix_props || {}
+    if (initFix !== undefined) node.Init = deepMerge(node.Init || {}, initFix)
+    if (uidFix !== undefined) node.UID = uidFix
     if (!node.Config) node.Config = {}
-    Object.assign(node.Config, suggestion.fix_props || {})
+    Object.assign(node.Config, configFix)
     parent[key] = node
     return true
   }
