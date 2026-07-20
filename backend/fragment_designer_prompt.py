@@ -333,7 +333,10 @@ order:
    - Slots.Left: one "flyout-card" whose Events.Listeners.ToggleFlyout listens for that same
      toggle-filter EventId from the header-action's ContainerId; its own Slots.Default holds the
      filter-panel element (see filter-panel schema below).
-   - Slots.Default: the single table.
+   - Slots.Default: the single table, WITH its footer-container/footer pagination sibling (see
+     "table" in CONTAINER TYPES above) — pagination is a real requirement of every table, not an
+     optional extra, and is easy to silently drop when focused on getting the sidebar/filter shape
+     right. Never ship a table without it unless the user explicitly says no pagination is wanted.
    - Slots.Right (optional, only if there's a row-detail drill-down): one "stack" container with
      Push/Pop listeners for push-details-flyout/close-details-flyout.
 
@@ -361,8 +364,9 @@ What is NOT optional, regardless of composition — get these exactly right ever
 - If a filter-panel is present, the shared ancestor Init contract and showFooter/showApplyButton/
   showClearButton flags from ELEMENT TYPES still apply exactly as documented — that part is never
   optional, whatever the rest of the layout looks like
-- Every table still needs Config.ShowFilter set correctly and real Columns per the "table" section
-  above
+- Every table still needs Config.ShowFilter set correctly, real Columns, and its
+  footer-container/footer pagination sibling per the "table" section above — never drop pagination
+  just because the surrounding layout has more moving parts
 A layout that gets the composition right but breaks any of these functional contracts is still a
 broken fragment — freedom on composition is not freedom on correctness.
 
