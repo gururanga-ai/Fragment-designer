@@ -758,6 +758,7 @@ function FullAutofillModal({ onClose, onRun }) {
         <div className="flex items-start justify-between gap-3">
           <p className="text-sm text-[#374151] flex-1">
             Describe the agent in plain English. Glean will automatically fill the configuration form and generate flow actions — no manual steps required.
+            {' '}Paste the actual details (field names, layout, entities) rather than just a link — having Glean fetch a page live routinely runs long enough to break the browser relay.
           </p>
           <button
             onClick={() => setDeepResearch(d => !d)}
@@ -780,6 +781,11 @@ function FullAutofillModal({ onClose, onRun }) {
             disabled={enhancing}
             className="w-full border border-[#CBD5E1] rounded p-3 text-sm resize-none focus:outline-none focus:border-[#2563EB] disabled:bg-[#F8FAFC] disabled:text-[#64748B]"
           />
+          {/https?:\/\//.test(desc) && (
+            <span className="absolute bottom-2 right-2 text-[10px] px-1.5 py-0.5 rounded bg-[#FEF3C7] text-[#92400E] font-semibold">
+              ⚠ link detected — paste the page's content instead for a reliable run
+            </span>
+          )}
           {enhanced && !enhancing && (
             <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded bg-[#F3E8FF] text-[#6B21A8] font-semibold">
               ✨ Enhanced
