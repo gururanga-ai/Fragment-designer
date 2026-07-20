@@ -517,6 +517,7 @@ export default function FlowBuilder({
   const [layoutPickerOpen, setLayoutPickerOpen] = useState(false)
   const [aiFragmentBusy, setAiFragmentBusy] = useState(false)
   const [aiFragmentError, setAiFragmentError] = useState('')
+  const [aiFragmentSuccess, setAiFragmentSuccess] = useState('')
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
   const flowKeys = Object.keys(flows)
@@ -813,17 +814,28 @@ export default function FlowBuilder({
         const next = [...prev]; next[idx] = newContent; return next
       })
 
-      if (selPath) {
-        const clean = actions.map(({ _id, ...r }) => r)
-        const newActions = setActionAtPath(clean, selPath, old => ({ ...old, inputJSON: old.inputJSON || contentName, _fragment_json: newContent }))
-        setActions(newActions)
-      } else {
-        const a = actions.map(({ _id, ...r }, i) => {
-          if (i !== selIdx) return r
-          return { ...r, inputJSON: r.inputJSON || contentName, _fragment_json: newContent }
-        })
-        setActions(a)
-      }
+      // Generation is a many-second round trip — read the actions array fresh off the functional
+      // update's `prev` instead of the `actions` closed over at click time. If anything else
+      // touched this flow/task while the request was in flight (switching tabs, editing another
+      // action), the closed-over snapshot would silently overwrite that with stale data and the
+      // fragment link would appear to just not happen.
+      const capturedFlowId = flowId, capturedTaskId = taskId, capturedSelPath = selPath, capturedSelIdx = selIdx
+      onFlowsChange(prev => {
+        const curActions = prev[capturedFlowId]?.[capturedTaskId] || []
+        let newActions
+        if (capturedSelPath) {
+          newActions = setActionAtPath(curActions, capturedSelPath, old => ({ ...old, inputJSON: old.inputJSON || contentName, _fragment_json: newContent }))
+        } else {
+          newActions = curActions.map((r, i) => {
+            if (i !== capturedSelIdx) return r
+            return { ...r, inputJSON: r.inputJSON || contentName, _fragment_json: newContent }
+          })
+        }
+        return { ...prev, [capturedFlowId]: { ...(prev[capturedFlowId] || {}), [capturedTaskId]: newActions } }
+      })
+      setAiFragmentError('')
+      setAiFragmentSuccess(`✓ Fragment "${contentName}" created and linked.`)
+      setTimeout(() => setAiFragmentSuccess(''), 4000)
     } catch (e) {
       setAiFragmentError(e.message)
     } finally {
@@ -1225,6 +1237,11 @@ export default function FlowBuilder({
           <p className="text-xs font-semibold text-[#991B1B] mb-1">✨ Create with AI failed</p>
           <p className="text-xs text-[#991B1B]">{aiFragmentError}</p>
           <button onClick={() => setAiFragmentError('')} className="mt-2 text-xs px-2 py-1 bg-white text-[#991B1B] rounded border border-[#FCA5A5]">Dismiss</button>
+        </div>
+      )}
+      {aiFragmentSuccess && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm bg-[#DCFCE7] border border-[#86EFAC] rounded-lg shadow-lg p-3">
+          <p className="text-xs font-semibold text-[#166534]">{aiFragmentSuccess}</p>
         </div>
       )}
     </div>
