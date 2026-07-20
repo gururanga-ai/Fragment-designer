@@ -60,3 +60,32 @@ export async function stackPublish({ stackName, domain, accessToken, org, facili
   }
   return data
 }
+
+async function _stackPost(path, body, failLabel) {
+  const resp = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) {
+    const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data)
+    throw new Error(detail || `${failLabel} failed (${resp.status})`)
+  }
+  return data
+}
+
+/** Test-flow step 1: start a chatbot session for a just-published agent. */
+export async function stackChatStart({ stackName, domain, accessToken, org, facilityId, businessUnit, agentId }) {
+  return _stackPost('/api/stack/chat/start', { stackName, domain, accessToken, org, facilityId, businessUnit, agentId }, 'Start chat')
+}
+
+/** Test-flow step 2: send a message into the started session. */
+export async function stackChatSend({ stackName, domain, accessToken, org, facilityId, businessUnit, chatbotId, sessionId, message }) {
+  return _stackPost('/api/stack/chat/send', { stackName, domain, accessToken, org, facilityId, businessUnit, chatbotId, sessionId, message }, 'Send message')
+}
+
+/** Test-flow step 3: query the recorded execution trace for a turn. */
+export async function stackChatTrace({ stackName, domain, accessToken, org, facilityId, businessUnit, sessionId, turn }) {
+  return _stackPost('/api/stack/chat/trace', { stackName, domain, accessToken, org, facilityId, businessUnit, sessionId, turn }, 'Fetch trace')
+}

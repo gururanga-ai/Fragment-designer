@@ -386,7 +386,7 @@ export default function AgentCreator({ onUpdateVarPool, onUpdateVarSchemas, onHa
           />
         )}
         {step === 2 && (
-          <ExportStep agentJson={agentJson} agentId={config.agentId} config={config} flows={flows} contents={contents} />
+          <ExportStep agentJson={agentJson} agentId={config.agentId} config={config} flows={flows} contents={contents} onFlowsChange={setFlows} />
         )}
       </div>
 

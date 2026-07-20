@@ -261,6 +261,31 @@ class StackPublishRequest(BaseModel):
     agent: dict
 
 
+class StackChatAuthBase(BaseModel):
+    """Shared auth fields for the Test-flow chat routes — same shape as StackPublishRequest."""
+    stackName: str
+    domain: str = "sce.manh.com"
+    accessToken: str
+    org: str
+    facilityId: str
+    businessUnit: str | None = None
+
+
+class StackChatStartRequest(StackChatAuthBase):
+    agentId: str
+
+
+class StackChatSendRequest(StackChatAuthBase):
+    chatbotId: str
+    sessionId: str
+    message: str
+
+
+class StackChatTraceRequest(StackChatAuthBase):
+    sessionId: str
+    turn: str = "TURN1"
+
+
 # ── Routes ────────────────────────────────────────────────────────────
 
 def _build_chat_body(req: ChatRequest) -> dict[str, Any]:
@@ -731,6 +756,67 @@ async def stack_publish(req: StackPublishRequest):
         detail = body if isinstance(body, str) else json.dumps(body)[:2000]
         raise HTTPException(status_code=resp.status_code, detail=detail)
     return body
+
+
+def _stack_headers(req: StackChatAuthBase) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {req.accessToken}",
+        "SelectedOrganization": req.org,
+        "SelectedLocation": req.facilityId,
+        "Content-Type": "application/json",
+    }
+    if req.businessUnit:
+        headers["SelectedBusinessUnit"] = req.businessUnit
+    return headers
+
+
+async def _stack_post(url: str, headers: dict, payload: dict) -> dict:
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, headers=headers, json=payload, timeout=60)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"Could not reach {url}: {exc}")
+    try:
+        body = resp.json()
+    except Exception:
+        body = {"raw": resp.text[:4000]}
+    if not resp.is_success:
+        detail = body if isinstance(body, str) else json.dumps(body)[:2000]
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+    return body
+
+
+@app.post("/api/stack/chat/start")
+async def stack_chat_start(req: StackChatStartRequest):
+    """Test-flow step 1: start a chatbot session for the just-published agent. Payload shape
+    confirmed against a real captured request/response for this exact endpoint."""
+    domain = req.domain.strip().lstrip(".") or "sce.manh.com"
+    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/startChat"
+    payload = {"ChatBotId": req.agentId, "Messages": None, "ChatbotId": req.agentId, "SessionId": None, "SessionParams": {}}
+    return await _stack_post(url, _stack_headers(req), payload)
+
+
+@app.post("/api/stack/chat/send")
+async def stack_chat_send(req: StackChatSendRequest):
+    """Test-flow step 2: send a message into the started session. UNCONFIRMED payload shape —
+    inferred from the startChat contract and the agentTrace log's own internal Process tag
+    ("AID::/chatbot/chat/stream"); no real captured request for this exact endpoint was available.
+    If this 404s/400s, the field names or path here are the first thing to check against a real
+    HAR capture of the actual glean.com-style chat UI talking to this stack."""
+    domain = req.domain.strip().lstrip(".") or "sce.manh.com"
+    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/chat/stream"
+    payload = {"ChatbotId": req.chatbotId, "SessionId": req.sessionId, "Message": req.message, "SessionParams": {}}
+    return await _stack_post(url, _stack_headers(req), payload)
+
+
+@app.post("/api/stack/chat/trace")
+async def stack_chat_trace(req: StackChatTraceRequest):
+    """Test-flow step 3: query the recorded trace for a turn. Payload shape confirmed against a
+    real captured request/response for this exact endpoint."""
+    domain = req.domain.strip().lstrip(".") or "sce.manh.com"
+    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/agent/agentTrace"
+    payload = {"Query": f"SessionId = '{req.sessionId}' AND TurnProvoked = '{req.turn}'"}
+    return await _stack_post(url, _stack_headers(req), payload)
 
 
 # Serve the built frontend (npm run build → dist/) when present, so a single process can
