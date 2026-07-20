@@ -233,10 +233,30 @@ export default function ConfigStep({
     let latestConversational = config.conversational
     const errors = []
 
-    // Call 1: configure agent (triggers CONFIG MODE)
-    setStatus('⏳ Step 1/3: Generating configuration...')
+    // Step 0: research once, in its own isolated call, instead of leaving every one of the 3
+    // generation calls below to independently re-research the same links/entities in `desc`
+    // (e.g. a Confluence page) — that tripling of slow lookup work was what pushed config/flow/
+    // fragment each past the extension relay's hard lifetime cap. One grounded rewrite here means
+    // the downstream calls are pure "generate JSON from an already-detailed spec" — fast.
+    let groundedDesc = desc
+    setStatus('⏳ Step 1/4: Researching company knowledge...')
     try {
-      const configPrompt = `Autofill this agent — configure agent properties for: ${desc}`
+      let researchText = ''
+      await gleanChat({
+        conversation: [{ role: 'user', text: buildEnhancePrompt(desc) }],
+        mode: 'enhance',
+        useDeepResearch: deepResearch,
+        onPartial: t => { researchText = t },
+      })
+      if (researchText.trim()) groundedDesc = researchText.trim()
+    } catch (e) {
+      errors.push(`Research: ${e.message} — continuing with the description as typed, ungrounded`)
+    }
+
+    // Call 1: configure agent (triggers CONFIG MODE)
+    setStatus('⏳ Step 2/4: Generating configuration...')
+    try {
+      const configPrompt = `Autofill this agent — configure agent properties for: ${groundedDesc}`
         + (noFragment ? ' This must be a conversational, chat-only agent with no dashboard/UI — set conversational: true.' : '')
       let configText = ''
       await gleanChat({ conversation: [{ role: 'user', text: configPrompt }], useDeepResearch: deepResearch, onPartial: t => { configText = t } })
@@ -259,7 +279,7 @@ export default function ConfigStep({
     } catch (e) { errors.push(`Config: ${e.message}`) }
 
     // Call 2: build flow (triggers FLOW MODE)
-    setStatus('⏳ Step 2/3: Generating flow actions...')
+    setStatus('⏳ Step 3/4: Generating flow actions...')
     let flowData = null
     try {
       const conversationalNote = (noFragment || latestConversational)
@@ -271,7 +291,7 @@ export default function ConfigStep({
       const layoutNote = (!noFragment && layoutChoice?.blueprint)
         ? ` The generated UI will use this layout: ${layoutChoice.blueprint} Shape transformTable outputs and the renderUI dataMap to match exactly what this layout needs (KPI tiles need row-0 scalar extraction, charts need named series fields, tables need column-matching field names).`
         : ''
-      const flowPrompt = `Build flow — generate actions for the default task: ${desc}${conversationalNote}${layoutNote}`
+      const flowPrompt = `Build flow — generate actions for the default task: ${groundedDesc}${conversationalNote}${layoutNote}`
       let flowText = ''
       await gleanChat({ conversation: [{ role: 'user', text: flowPrompt }], useDeepResearch: deepResearch, onPartial: t => { flowText = t } })
       flowData = extractJson(flowText)
@@ -357,11 +377,11 @@ export default function ConfigStep({
       // The user already picked a concrete layout in the picker step — go straight to that
       // blueprint instead of making a separate "suggest a layout" round trip first.
       let layoutIntent = (layoutChoice?.blueprint
-        ? `${desc}\n\nRequired layout pattern (user-selected: ${layoutChoice.label}): ${layoutChoice.blueprint}`
-        : desc) + dataBindingNote + filterKeyNote + rowFieldNote
+        ? `${groundedDesc}\n\nRequired layout pattern (user-selected: ${layoutChoice.label}): ${layoutChoice.blueprint}`
+        : groundedDesc) + dataBindingNote + filterKeyNote + rowFieldNote
       let generatedFragment = null
 
-      setStatus('⏳ Step 3/3: Generating fragment layout...')
+      setStatus('⏳ Step 4/4: Generating fragment layout...')
       let lastGenText = ''
       try {
         // Actually generate the fragment JSON (ALIGN_FIX_SYSTEM GENERATION MODE —
@@ -370,7 +390,7 @@ export default function ConfigStep({
         // Generation is observed to occasionally return non-fragment output (suggestions/prose)
         // for the exact same prompt — retrying meaningfully improves the odds of a real result.
         for (let attempt = 1; attempt <= 3 && !generatedFragment; attempt++) {
-          setStatus(`⏳ Step 3/3: Generating fragment JSON${attempt > 1 ? ' (retry)' : ''}...`)
+          setStatus(`⏳ Step 4/4: Generating fragment JSON${attempt > 1 ? ' (retry)' : ''}...`)
           let genText = ''
           await gleanRunWorkflow({
             prompt: layoutIntent,
