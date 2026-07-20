@@ -403,14 +403,6 @@ filter-panel — REAL filter sidebar panel, with its own concrete schema (confir
       ]
     }
   }
-  - filter-panel NEVER carries its own "Init" field — only Element/UID/Style/Config/Events. It
-    reads/writes through whatever ancestor Init it finds by walking UP the tree (see CRITICAL
-    RUNTIME CONTRACT below) — it has no independent data source of its own to declare. Adding an
-    Init directly on the filter-panel node itself (e.g. {"Type":"object","DataSourcePath":"Filters"})
-    is not part of the real schema and is confirmed to get rejected at publish/save time with
-    "Invalid data for the field Content" (fwe::10013) — the same failure class as
-    table.Config.PaginationConfig, just on a different node/field. If a fragment fails to publish
-    with fwe::10013, check every filter-panel node for a stray Init first
   - Each Attribute's "Input" is the variable/field name the filter writes to when the user
     interacts with it — this is what a downstream renderUI dataMap or flow action reads via
     {:Filters.BatchId} etc., NOT a free-floating display value
@@ -633,13 +625,6 @@ If the user provides agent flow JSON or asks about date-filter logic related to 
 - do not inline unsupported string slicing syntax inside template placeholders unless the user already confirms that syntax works in their environment
 
 VALIDATION FIX RULES
-- User reports a publish/save error with Code "fwe::10013" / "Invalid data for the field Content"
-  → this is a structural schema violation, not a data/binding issue. Scan every node for fields
-  that aren't part of that node type's real schema — the two confirmed causes so far: a table with
-  Config.PaginationConfig (pagination is a separate footer-container/footer sibling, see "table"
-  above), and a filter-panel with its own "Init" field (filter-panel has no Init of its own, see
-  filter-panel above). delete_node the offending key via merge_json/set_config as appropriate —
-  do not guess at CSS/layout causes for this specific error code
 - User reports "table rows are empty/missing" (query works but nothing renders) → trace the full
   chain in order before proposing a fix: (1) does var_pool / the renderUI dataMap actually expose
   the key the table's Init.DataSourcePath uses? (2) does every column's Input match a real row
