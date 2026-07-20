@@ -325,11 +325,40 @@ export default function ConfigStep({
       const filterKeyNote = filterKeyMatches.length > 0
         ? ` The flow's SQL/WHERE/conditions already read filters via these exact keys: ${filterKeyMatches.join(', ')} (i.e. {:Filters.<key>}). Every filter-panel Attribute's "Input" MUST be exactly one of these names — using a different name means Apply changes the UI state but the flow never sees it, so filtering silently does nothing.`
         : ''
+      // varPool only grounds the TOP-LEVEL dataMap key (e.g. "TableData") — it says nothing about
+      // the actual ROW-LEVEL field names inside that dataset (e.g. BatchId, BatchStatus), which
+      // live in the upstream transformTable/sql action, not in renderUI itself. Without this,
+      // Init.DataSourcePath comes out correct but every table column Input/SortBy and chart
+      // fieldMappings key is still an independent guess — exactly the failure mode that survived
+      // the var_pool fix (right DataSourcePath, invented columns).
+      const rowFieldsByDataKey = {}
+      if (Array.isArray(flowData)) {
+        for (const [dataKey, expr] of Object.entries(varPool)) {
+          if (dataKey === 'Filters' || typeof expr !== 'string') continue
+          const varMatch = expr.match(/object::([A-Za-z0-9_]+)/)
+          if (!varMatch) continue
+          const producer = flowData.find(a => a.outputVariableName === varMatch[1])
+          if (!producer) continue
+          let fields = []
+          if (producer.type === 'transformTable') {
+            const allFields = [...(producer.fields || []), ...(producer.conditionalFields || []).map(cf => cf.field).filter(Boolean)]
+            fields = allFields.map(f => f.targetFieldName).filter(Boolean)
+          } else if (producer.type === 'sql' && typeof producer.sql === 'string') {
+            fields = [...producer.sql.matchAll(/\bAS\s+([A-Za-z0-9_]+)/gi)].map(m => m[1])
+          }
+          if (fields.length > 0) rowFieldsByDataKey[dataKey] = [...new Set(fields)]
+        }
+      }
+      const rowFieldNote = Object.keys(rowFieldsByDataKey).length > 0
+        ? ' ' + Object.entries(rowFieldsByDataKey).map(([k, fields]) =>
+            `The dataset bound via DataSourcePath:"${k}" has EXACTLY these row fields, case-exact, and no others: ${fields.join(', ')}. Every table column Input/Sort.SortBy and chart dataMapping.seriesMappings.fieldMappings key bound to this dataset MUST be one of these names — inventing a column/field name outside this list renders empty with no error.`
+          ).join(' ')
+        : ''
       // The user already picked a concrete layout in the picker step — go straight to that
       // blueprint instead of making a separate "suggest a layout" round trip first.
       let layoutIntent = (layoutChoice?.blueprint
         ? `${desc}\n\nRequired layout pattern (user-selected: ${layoutChoice.label}): ${layoutChoice.blueprint}`
-        : desc) + dataBindingNote + filterKeyNote
+        : desc) + dataBindingNote + filterKeyNote + rowFieldNote
       let generatedFragment = null
 
       setStatus('⏳ Step 3/3: Generating fragment layout...')
