@@ -281,6 +281,10 @@ class StackChatSendRequest(StackChatAuthBase):
     message: str
 
 
+class StackChatEndRequest(StackChatAuthBase):
+    sessionId: str
+
+
 class StackChatTraceRequest(StackChatAuthBase):
     sessionId: str
     turn: str = "TURN1"
@@ -788,33 +792,52 @@ async def _stack_post(url: str, headers: dict, payload: dict) -> dict:
 
 @app.post("/api/stack/chat/start")
 async def stack_chat_start(req: StackChatStartRequest):
-    """Test-flow step 1: start a chatbot session for the just-published agent. Payload shape
-    confirmed against a real captured request/response for this exact endpoint."""
+    """Test-flow step 1: start a chatbot session for the just-published agent. Base payload shape
+    confirmed against a real captured request/response for this exact endpoint.
+    SessionParams.UsePublishedVersionOnly:false matters — Composer defaults this to true when
+    omitted, meaning a test right after Publish would still run the PREVIOUSLY published version
+    instead of what was just saved."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
     url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/startChat"
-    payload = {"ChatBotId": req.agentId, "Messages": None, "ChatbotId": req.agentId, "SessionId": None, "SessionParams": {}}
+    payload = {
+        "ChatBotId": req.agentId,
+        "Messages": None,
+        "ChatbotId": req.agentId,
+        "SessionId": None,
+        "SessionParams": {"UsePublishedVersionOnly": False},
+    }
     return await _stack_post(url, _stack_headers(req), payload)
 
 
 @app.post("/api/stack/chat/send")
 async def stack_chat_send(req: StackChatSendRequest):
-    """Test-flow step 2: send a message into the already-started session. Reuses the same
-    startChat endpoint (per the user) — SessionId populated instead of null is what turns this
-    into "continue this session" rather than "start a new one". Messages must be an OBJECT, not
-    an array — a raw array attempt got a server-side Jackson error naming the real Java type,
-    com.manh.cp.fw.common.Messages, "Cannot deserialize ... from Array value". Every response in
-    this same API family wraps its own lists identically: {"messages": {"Message": [...], "Size":
-    N}} (see the agentTrace/startChat response bodies) — applying that exact convention to the
-    request side. The inner item shape ({"Text": ...}) is still an educated guess, not confirmed."""
+    """Test-flow step 2: send a message into the already-started session. Two earlier guesses
+    (a separate chat/stream endpoint, then reusing startChat with a populated SessionId) both
+    failed — the second one parsed and routed but hit a real backend transaction-commit error,
+    consistent with startChat only ever being valid for creating a brand-new session. The real
+    mechanism is a distinct chatbot/chat endpoint: ChatBotId (not the old duplicate "ChatbotId"
+    key) + the real SessionId + the message duplicated into BOTH "Chat" and "userInput" (different
+    layers of the stack apparently read different fields for this) + the same
+    UsePublishedVersionOnly:false SessionParams as the start call."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
-    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/startChat"
+    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/chat"
     payload = {
         "ChatBotId": req.chatbotId,
-        "Messages": {"Message": [{"Text": req.message}], "Size": 1},
-        "ChatbotId": req.chatbotId,
         "SessionId": req.sessionId,
-        "SessionParams": {},
+        "Chat": req.message,
+        "userInput": req.message,
+        "SessionParams": {"UsePublishedVersionOnly": False},
     }
+    return await _stack_post(url, _stack_headers(req), payload)
+
+
+@app.post("/api/stack/chat/end")
+async def stack_chat_end(req: StackChatEndRequest):
+    """Optional Test-flow cleanup: ends the test session. Best-effort — callers should not fail
+    the overall test run if this errors, it's just tidy-up."""
+    domain = req.domain.strip().lstrip(".") or "sce.manh.com"
+    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/endChat"
+    payload = {"SessionId": req.sessionId}
     return await _stack_post(url, _stack_headers(req), payload)
 
 

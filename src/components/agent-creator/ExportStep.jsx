@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import StackLoginModal from './StackLoginModal'
 import { buildPublishPayload, extractJson } from '../../utils/agentBuilder'
-import { getStoredStackSession, clearStoredStackSession, stackPublish, stackChatStart, stackChatSend, stackChatTrace } from '../../utils/stackApi'
+import { getStoredStackSession, clearStoredStackSession, stackPublish, stackChatStart, stackChatSend, stackChatTrace, stackChatEnd } from '../../utils/stackApi'
 import { safeCopyToClipboard } from '../../utils/clipboard'
 import { gleanChat } from '../../utils/gleanApi'
 
@@ -202,6 +202,10 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
       const parsed = records.map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
       setTestTraces(parsed)
       setTestStatus(parsed.length > 0 ? null : { state: 'error', message: 'Trace query returned no records — the turn may not have executed yet.' })
+
+      // Best-effort cleanup — a failure here doesn't affect anything the user cares about,
+      // the trace is already fetched, so it's not worth surfacing as a test failure.
+      stackChatEnd({ ...activeSession, sessionId }).catch(() => {})
     } catch (err) {
       setTestStatus({ state: 'error', message: err.message })
     }
