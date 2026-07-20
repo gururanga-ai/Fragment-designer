@@ -286,7 +286,8 @@ class StackChatEndRequest(StackChatAuthBase):
 
 
 class StackChatTraceRequest(StackChatAuthBase):
-    sessionId: str
+    agentId: str
+    sessionId: str | None = None  # kept for client-side sanity-checking the result, not sent in the query
     turn: str | None = None
 
 
@@ -854,17 +855,20 @@ async def stack_chat_end(req: StackChatEndRequest):
 
 @app.post("/api/stack/chat/trace")
 async def stack_chat_trace(req: StackChatTraceRequest):
-    """Test-flow step 3: query the recorded trace for a session. The real payload is FLAT JSON
-    fields — {"sessionId": ..., "turn": ...} — NOT a SQL-like "Query" string
-    ("SessionId = '...' AND TurnProvoked = '...'"), confirmed by the user directly against this
-    exact endpoint in Postman with real results returned. Every prior attempt using the Query-
-    string shape was the actual root cause of every "trace query returned no records" failure —
-    it was silently accepted (200 OK, no error) but never genuinely matched."""
+    """Test-flow step 3: fetch the most recent trace for this agent.
+    /commonui-facade/api/commonui-facade/agentTrace/search — a DIFFERENT endpoint from the earlier
+    chatbot/agent/agentTrace attempt (which never reliably scoped by SessionId/turn server-side,
+    confirmed by a returned trace tree belonging to an unrelated agent). This one filters by
+    AgentId with an explicit server-side Sort (CreatedTimestamp desc) + Size:1, i.e. "give me the
+    single latest trace for this agent" — a query shape that's actually enforceable server-side,
+    unlike trying to match one specific session/turn. Confirmed real payload shape by the user."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
-    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/agent/agentTrace"
-    payload = {"sessionId": req.sessionId}
-    if req.turn:
-        payload["turn"] = req.turn
+    url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/agentTrace/search"
+    payload = {
+        "Query": f"AgentId = '{req.agentId}'",
+        "Size": 1,
+        "Sort": [{"attribute": "CreatedTimestamp", "direction": "desc"}],
+    }
     return await _stack_post(url, _stack_headers(req), payload)
 
 

@@ -226,33 +226,29 @@ export default function ExportStep({ agentJson, agentId, config, flows, contents
       const turnId = sendResp?.data?.TurnId
 
       // Trace recording may lag slightly behind the chat call returning — retry a few times
-      // with a short pause before concluding the turn genuinely didn't execute.
+      // with a short pause before concluding the turn genuinely didn't execute. Uses
+      // agentTrace/search (AgentId filter + server-side Sort desc + Size:1 — "the single latest
+      // trace for this agent") instead of trying to match a specific session/turn, which never
+      // reliably scoped server-side on the older chatbot/agent/agentTrace endpoint.
       let parsed = []
       let lastTraceResp = null
+      let sessionMismatch = false
       for (let attempt = 1; attempt <= 4 && parsed.length === 0; attempt++) {
         setTestStatus({ state: 'busy', message: `Step 4/4: Fetching execution trace${attempt > 1 ? ` (retry ${attempt - 1})` : ''}…` })
         if (attempt > 1) await new Promise(res => setTimeout(res, 1200))
-        const traceResp = await stackChatTrace({ ...activeSession, sessionId, turn: turnId })
+        const traceResp = await stackChatTrace({ ...activeSession, agentId: agentIdForChat, sessionId, turn: turnId })
         lastTraceResp = traceResp
-        // The sessionId/turn query params don't reliably scope server-side (confirmed: a query
-        // for one session/turn came back with totalCount in the tens of thousands and a trace
-        // tree for a completely different agent) — filter client-side on the record's own
-        // SessionId field instead of trusting the query to have already done it.
-        const records = [...(traceResp?.data || [])]
-          .filter(r => r.SessionId === sessionId)
-          .sort((a, b) => (b.CreatedTimestamp || '').localeCompare(a.CreatedTimestamp || ''))
-        parsed = records.slice(0, 1).map(r => { try { return JSON.parse(r.Trace) } catch { return null } }).filter(Boolean)
+        const records = traceResp?.data || []
+        const latest = records[0]
+        sessionMismatch = !!latest && latest.SessionId !== sessionId
+        parsed = latest ? [(() => { try { return JSON.parse(latest.Trace) } catch { return null } })()].filter(Boolean) : []
       }
-      debug.request.trace = { sessionId, turn: turnId }; debug.response.trace = lastTraceResp
+      debug.request.trace = { agentId: agentIdForChat }; debug.response.trace = lastTraceResp
       setTestDebug({ ...debug })
       setTestTraces(parsed)
-      const rawCount = lastTraceResp?.data?.length || 0
-      setTestStatus(parsed.length > 0 ? null : {
-        state: 'error',
-        message: rawCount > 0
-          ? `agentTrace returned ${rawCount} record(s) but NONE had SessionId matching "${sessionId}" — the query's sessionId/turn params aren't actually scoping server-side (see totalCount in the raw trace response below). This isn't your test's trace.`
-          : 'Trace query returned no records after 4 attempts — see the raw request/response payloads below for every step.',
-      })
+      setTestStatus(parsed.length > 0
+        ? (sessionMismatch ? { state: 'error', message: `Got the agent's latest trace, but its SessionId doesn't match this run's session (${sessionId}) — likely a concurrent test/session on the same agent raced this one. Shown below anyway; verify the timestamps line up with when you clicked Test.` } : null)
+        : { state: 'error', message: 'agentTrace/search returned no records after 4 attempts — see the raw request/response payloads below for every step.' })
 
       // Best-effort cleanup — a failure here doesn't affect anything the user cares about,
       // the trace is already fetched, so it's not worth surfacing as a test failure.
