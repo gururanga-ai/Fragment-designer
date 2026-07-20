@@ -854,17 +854,17 @@ async def stack_chat_end(req: StackChatEndRequest):
 
 @app.post("/api/stack/chat/trace")
 async def stack_chat_trace(req: StackChatTraceRequest):
-    """Test-flow step 3: query the recorded trace for a session. Query shape confirmed against a
-    real captured request/response for this exact endpoint. Deliberately queries by SessionId
-    ONLY, not SessionId+TurnProvoked — a session is not guaranteed to be fresh (Composer's
-    startChat, called with no explicit SessionId, can attach to an existing session for the same
-    ChatBotId/user rather than always creating turn 1), confirmed by a real trace coming back
-    tagged TurnProvoked:"TURN2" with "First entry: false" in its own log. The caller picks the
-    most recent record out of however many this returns."""
+    """Test-flow step 3: query the recorded trace for a session. The real payload is FLAT JSON
+    fields — {"sessionId": ..., "turn": ...} — NOT a SQL-like "Query" string
+    ("SessionId = '...' AND TurnProvoked = '...'"), confirmed by the user directly against this
+    exact endpoint in Postman with real results returned. Every prior attempt using the Query-
+    string shape was the actual root cause of every "trace query returned no records" failure —
+    it was silently accepted (200 OK, no error) but never genuinely matched."""
     domain = req.domain.strip().lstrip(".") or "sce.manh.com"
     url = f"https://{req.stackName}.{domain}/commonui-facade/api/commonui-facade/chatbot/agent/agentTrace"
-    query = f"SessionId = '{req.sessionId}'" + (f" AND TurnProvoked = '{req.turn}'" if req.turn else "")
-    payload = {"Query": query}
+    payload = {"sessionId": req.sessionId}
+    if req.turn:
+        payload["turn"] = req.turn
     return await _stack_post(url, _stack_headers(req), payload)
 
 
