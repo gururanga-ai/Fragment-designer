@@ -490,7 +490,7 @@ export default function ConfigStep({
     const parts = []
     if (configApplied > 0) parts.push(`${configApplied} config field(s)`)
     if (flowApplied > 0) parts.push(`${flowApplied} flow action(s)`)
-    if (skipFragment) parts.push('fragment skipped — generate it later from "Edit in Designer" on the renderUI action')
+    if (skipFragment) parts.push(`fragment skipped — when ready, use "✨ Create with AI" on the renderUI action${layoutChoice?.label ? ` and pick "${layoutChoice.label}" again to match` : ''}`)
     if (errors.length) parts.push(...errors.map(e => `⚠ ${e}`))
     setStatus(`✓ Done — ${parts.join(' · ') || 'No data applied'}`)
     onDone()
@@ -719,12 +719,12 @@ function FullAutofillModal({ onClose, onRun }) {
 
   // "Run Autofill" no longer generates a fragment blind — it first asks the user to pick a
   // concrete layout (or "No Fragment"), and that choice drives both flow shaping and fragment
-  // generation downstream instead of a fuzzy word-guess over the prompt text. Skipping fragment
-  // generation entirely (skipFragment checked) makes the layout choice moot for this run, so it
-  // goes straight to run instead of asking.
+  // generation downstream instead of a fuzzy word-guess over the prompt text. Still ask even when
+  // skipFragment is checked — the layout choice shapes the FLOW actions now (transformTable
+  // output fields, renderUI dataMap) so a later "Create with AI" run on the same layout has real
+  // data to bind to; only the actual fragment-JSON generation call itself is skipped.
   const handleRun = () => {
     if (!desc.trim() || running) return
-    if (skipFragment) { handleLayoutChosen(null); return }
     setLayoutPickerOpen(true)
   }
 
@@ -852,7 +852,7 @@ function FullAutofillModal({ onClose, onRun }) {
         </label>
         <label className="flex items-center gap-1.5 text-xs text-[#374151] -mt-1">
           <input type="checkbox" checked={skipFragment} onChange={e => setSkipFragment(e.target.checked)} className="accent-[#1E3A8A]" />
-          Skip fragment for now — just config + flow actions, I'll generate the UI later
+          Skip fragment for now — just config + flow actions shaped for the layout I pick, I'll generate the UI later
         </label>
         <div className="relative">
           <textarea
